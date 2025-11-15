@@ -49,6 +49,8 @@ where
     )
 }
 
+//-------------------------------------------------------------------------- Blacklist
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlacklistedNetwork {
     #[serde(rename = "_id")]
@@ -118,55 +120,6 @@ async fn get_blacklist(
     Json(results).into_response()
 }
 
-// async fn get_blacklist(Query(params): Query<HashMap<String, String>>) -> impl IntoResponse {
-//     let database = get_collection().await.expect("Failed to connect to DB");
-//     let my_coll: Collection<BlacklistedNetwork> = database.collection("Blacklist");
-//
-//     let ssid_query = params.get("ssid");
-//     let date_query = params.get("date");
-//
-//     let mut filter = doc! {};
-//
-//     if let Some(ssid) = ssid_query {
-//         filter.insert("ssid", doc! { "$regex": ssid, "$options": "i" });
-//     }
-//
-//     if let Some(date_str) = date_query {
-//         if let Ok(parsed_date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
-//             let start = Utc.from_utc_datetime(&parsed_date.and_hms_opt(0, 0, 0).unwrap());
-//             let end = Utc.from_utc_datetime(&parsed_date.and_hms_opt(23, 59, 59).unwrap());
-//
-//             filter.insert(
-//                 "timestamp",
-//                 doc! {
-//                     "$gte": DateTime::from_millis(start.timestamp_millis()),
-//                     "$lte": DateTime::from_millis(end.timestamp_millis()),
-//                 },
-//             );
-//         }
-//     }
-//
-//     let mut cursor = match my_coll.find(filter).await {
-//         Ok(cursor) => cursor,
-//         Err(err) => {
-//             let body = Json(serde_json::json!({ "error": err.to_string() }));
-//             return (StatusCode::INTERNAL_SERVER_ERROR, body).into_response();
-//         }
-//     };
-//
-//     let mut results = Vec::new();
-//     while let Some(doc) = cursor.try_next().await.unwrap_or(None) {
-//         results.push(BlacklistedNetworkResponse {
-//             id: doc.id.to_hex(),
-//             ssid: doc.ssid,
-//             bssid: doc.bssid,
-//             timestamp: doc.timestamp,
-//             reason: doc.reason,
-//         });
-//     }
-//
-//     Json(results).into_response()
-// }
 
 async fn delete_from_blacklist(
     user: AuthUser,
@@ -187,39 +140,6 @@ async fn delete_from_blacklist(
     }
 }
 
-// async fn delete_from_blacklist(Path(id): Path<String>) -> impl IntoResponse {
-//     let db = get_collection().await.expect("DB connection");
-//     let coll: Collection<BlacklistedNetwork> = db.collection("Blacklist");
-//
-//     let obj_id = match ObjectId::parse_str(&id) {
-//         Ok(oid) => oid,
-//         Err(_) => {
-//             return (
-//                 StatusCode::BAD_REQUEST,
-//                 Json(serde_json::json!({"error": "Invalid id"})),
-//             )
-//                 .into_response();
-//         }
-//     };
-//
-//     match coll.delete_one(doc! { "_id": obj_id }).await {
-//         Ok(res) if res.deleted_count == 1 => (
-//             StatusCode::OK,
-//             Json(serde_json::json!({"status": "deleted"})),
-//         )
-//             .into_response(),
-//         Ok(_) => (
-//             StatusCode::NOT_FOUND,
-//             Json(serde_json::json!({"error": "Not found"})),
-//         )
-//             .into_response(),
-//         Err(e) => (
-//             StatusCode::INTERNAL_SERVER_ERROR,
-//             Json(serde_json::json!({"error": e.to_string()})),
-//         )
-//             .into_response(),
-//     }
-// }
 
 async fn add_to_blacklist(
     user: AuthUser,
@@ -243,32 +163,6 @@ async fn add_to_blacklist(
 }
 
 
-// async fn add_to_blacklist(
-//     JsonExtract(payload): JsonExtract<NewBlacklistEntry>,
-// ) -> impl IntoResponse {
-//     let db = get_collection().await.expect("DB connection");
-//     let coll: Collection<Document> = db.collection("Blacklist");
-//
-//     let new_doc = doc! {
-//         "ssid": payload.ssid,
-//         "bssid": payload.bssid,
-//         "timestamp": DateTime::now(),
-//         "reason": payload.reason.unwrap_or("Manually added".into()),
-//     };
-//
-//     match coll.insert_one(new_doc).await {
-//         Ok(_) => (
-//             StatusCode::CREATED,
-//             Json(serde_json::json!({"status": "added"})),
-//         )
-//             .into_response(),
-//         Err(e) => (
-//             StatusCode::INTERNAL_SERVER_ERROR,
-//             Json(serde_json::json!({"error": e.to_string()})),
-//         )
-//             .into_response(),
-//     }
-// }
 // ------------------------------------------------- WHITELIST
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -499,13 +393,18 @@ async fn add_to_whitelist(
 pub struct LogEntry {
     #[serde(rename = "_id")]
     pub id: ObjectId,
+
     pub user_id: String,
     pub network_ssid: String,
     pub network_bssid: Option<String>,
     pub action: String,
+
+    #[serde(serialize_with = "serialize_datetime_as_iso_string")]
     pub timestamp: DateTime,
+
     pub details: Option<String>,
 }
+
 
 #[derive(Debug, Deserialize)]
 pub struct NewLogEntry {
@@ -537,32 +436,37 @@ async fn add_log(
     }
 }
 
-async fn get_logs(user: AuthUser, Query(params): Query<HashMap<String, String>>) -> impl IntoResponse {
+async fn get_logs(
+    user: AuthUser,
+    Query(params): Query<HashMap<String, String>>
+) -> impl IntoResponse {
     let db = get_collection().await.expect("DB connection");
     let coll: Collection<LogEntry> = db.collection("Logs");
 
     let mut filter = doc! { "user_id": &user.user_id };
 
-    if let Some(action) = params.get("action") {
-        filter.insert("action", action);
-    }
-
-    if let Some(ssid) = params.get("ssid") {
-        filter.insert("network_ssid", doc! { "$regex": ssid, "$options": "i" });
-    }
-
+    if let Some(action) = params.get("action") { filter.insert("action", action); }
+    if let Some(ssid) = params.get("ssid") { filter.insert("network_ssid", doc! { "$regex": ssid, "$options": "i" }); }
     if let Some(date_str) = params.get("date") {
         if let Ok(parsed_date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
             let start = Utc.from_utc_datetime(&parsed_date.and_hms_opt(0, 0, 0).unwrap());
             let end = Utc.from_utc_datetime(&parsed_date.and_hms_opt(23, 59, 59).unwrap());
             filter.insert("timestamp", doc! {
                 "$gte": DateTime::from_millis(start.timestamp_millis()),
-                "$lte": DateTime::from_millis(end.timestamp_millis()),
+                "$lte": DateTime::from_millis(end.timestamp_millis())
             });
         }
     }
 
-    let mut cursor = match coll.find(filter).await {
+    // Parse pagination params
+    let page: u64 = params.get("page").and_then(|v| v.parse().ok()).unwrap_or(1);
+    let limit: u64 = params.get("limit").and_then(|v| v.parse().ok()).unwrap_or(11);
+    let skip:u64 = (page - 1) * limit;
+
+    // Get total count
+    let total = coll.count_documents(filter.clone()).await.unwrap_or_else(|_| 0);
+
+    let mut cursor = match coll.find(filter).skip(skip).limit(limit as i64).await {
         Ok(cursor) => cursor,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
     };
@@ -572,8 +476,12 @@ async fn get_logs(user: AuthUser, Query(params): Query<HashMap<String, String>>)
         results.push(doc);
     }
 
-    Json(results).into_response()
+    Json(serde_json::json!({
+        "total": total,
+        "logs": results
+    })).into_response()
 }
+
 
 //---------------------------------------------------------------------------- Login
 
@@ -700,10 +608,6 @@ async fn login_handler(
         user_id: user.id.to_hex(),
         username: user.username,
     }))
-}
-
-async fn protected_route(user: AuthUser) -> String {
-    format!("Hello user {}", user.user_id)
 }
 
 //-----------------------------------------------------------------------------------------------
