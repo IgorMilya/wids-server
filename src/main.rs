@@ -25,6 +25,7 @@ use mongodb::bson::{DateTime, Document};
 use mongodb::{Client, Collection, bson::doc};
 use once_cell::sync::Lazy;
 use rand::Rng;
+use reqwest::Client as ReqwestClient;
 use serde::Serializer;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -380,6 +381,7 @@ pub struct Claims {
 pub struct LoginRequest {
     pub email: String,
     pub password: String,
+    pub captcha_token: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -393,6 +395,7 @@ pub struct LoginResponse {
 pub struct RegisterRequest {
     pub email: String,
     pub password: String,
+    pub captcha_token: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -417,6 +420,8 @@ pub struct ResetPasswordConfirm {
 pub struct ResendVerificationRequest {
     pub email: String,
 }
+
+static HTTP_CLIENT: Lazy<ReqwestClient> = Lazy::new(|| ReqwestClient::new());
 
 async fn send_email(to: &str, subject: &str, body: &str) {
     println!(
@@ -454,6 +459,61 @@ const WINDOW: stdDuration = stdDuration::from_secs(60 * 60);
 fn generate_code() -> String {
     let mut rng = rand::rng();
     format!("{:06}", rng.random_range(0..1_000_000))
+}
+
+#[derive(Debug, Deserialize)]
+struct RecaptchaResponse {
+    success: bool,
+    #[allow(dead_code)]
+    challenge_ts: Option<String>,
+    #[allow(dead_code)]
+    hostname: Option<String>,
+    #[allow(dead_code)]
+    score: Option<f32>,
+    #[allow(dead_code)]
+    action: Option<String>,
+    #[allow(dead_code)]
+    #[serde(rename = "error-codes")]
+    error_codes: Option<Vec<String>>,
+}
+
+async fn ensure_recaptcha(token: &str) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let secret = env::var("RECAPTCHA_SECRET").map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "Captcha not configured"})),
+        )
+    })?;
+
+    let resp = HTTP_CLIENT
+        .post("https://www.google.com/recaptcha/api/siteverify")
+        .form(&[("secret", secret), ("response", token.to_string())])
+        .send()
+        .await
+        .map_err(|err| {
+            eprintln!("Recaptcha request failed: {err:?}");
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": "Captcha verification failed"})),
+            )
+        })?;
+
+    let body: RecaptchaResponse = resp.json().await.map_err(|err| {
+        eprintln!("Recaptcha parse failed: {err:?}");
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": "Captcha verification failed"})),
+        )
+    })?;
+
+    if !body.success {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Captcha verification failed"})),
+        ));
+    }
+
+    Ok(())
 }
 pub struct AuthUser {
     pub user_id: String,
@@ -507,6 +567,10 @@ pub fn verify_jwt(token: &str) -> JWTResult<TokenData<Claims>> {
     )
 }
 async fn login_handler(Json(payload): Json<LoginRequest>) -> impl IntoResponse {
+    if let Err(err) = ensure_recaptcha(&payload.captcha_token).await {
+        return err.into_response();
+    }
+
     let db = match get_collection().await {
         Ok(db) => db,
         Err(_) => {
@@ -579,6 +643,10 @@ async fn register_handler(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(payload): Json<RegisterRequest>,
 ) -> impl IntoResponse {
+    if let Err(err) = ensure_recaptcha(&payload.captcha_token).await {
+        return err.into_response();
+    }
+
     println!("Register request received: {:?}", payload);
     let ip = addr.ip().to_string();
     let now = SystemTime::now();
