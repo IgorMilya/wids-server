@@ -320,10 +320,16 @@ async fn get_logs(
     let coll: Collection<LogEntry> = db.collection("Logs");
     let mut filter = doc! { "user_id": &user.user_id };
     if let Some(action) = params.get("action") {
-        filter.insert("action", action);
+        let action_str = action.trim();
+        if !action_str.is_empty() {
+            filter.insert("action", doc! { "$regex": action_str, "$options": "i" });
+        }
     }
     if let Some(ssid) = params.get("ssid") {
-        filter.insert("network_ssid", doc! { "$regex": ssid, "$options": "i" });
+        let ssid_str = ssid.trim();
+        if !ssid_str.is_empty() {
+            filter.insert("network_ssid", doc! { "$regex": ssid_str, "$options": "i" });
+        }
     }
     // Support date range filtering (date_from and date_till) or single date
     if let Some(date_from_str) = params.get("date_from") {
@@ -351,12 +357,33 @@ async fn get_logs(
         .get("limit")
         .and_then(|v| v.parse().ok())
         .unwrap_or(11);
-    let skip: u64 = (page - 1) * limit; // Get total count 
+    let skip: u64 = (page - 1) * limit; // Parse sort parameters
+    let sort_field = params.get("sort_by").unwrap_or(&"timestamp".to_string()).clone();
+    let sort_direction_str = params.get("sort_direction").unwrap_or(&"desc".to_string()).clone();
+    let sort_direction = if sort_direction_str == "asc" { 1 } else { -1 };
+    
+    // Map frontend column names to backend field names
+    let db_sort_field = match sort_field.as_str() {
+        "SSID" => "network_ssid",
+        "BSSID" => "network_bssid",
+        "Action" => "action",
+        "Timestamp" => "timestamp",
+        "Details" => "details",
+        "network_ssid" => "network_ssid",
+        "network_bssid" => "network_bssid",
+        "action" => "action",
+        "timestamp" => "timestamp",
+        "details" => "details",
+        _ => "timestamp", // Default to timestamp if unknown field
+    };
+    
+    // Get total count 
     let total = coll
         .count_documents(filter.clone())
         .await
         .unwrap_or_else(|_| 0);
-    let mut cursor = match coll.find(filter).skip(skip).limit(limit as i64).await {
+    let sort_options = doc! { db_sort_field: sort_direction };
+    let mut cursor = match coll.find(filter).sort(sort_options).skip(skip).limit(limit as i64).await {
         Ok(cursor) => cursor,
         Err(e) => {
             return (
@@ -383,10 +410,16 @@ async fn export_logs(
     
     // Apply same filters as get_logs but without pagination
     if let Some(action) = params.get("action") {
-        filter.insert("action", action);
+        let action_str = action.trim();
+        if !action_str.is_empty() {
+            filter.insert("action", doc! { "$regex": action_str, "$options": "i" });
+        }
     }
     if let Some(ssid) = params.get("ssid") {
-        filter.insert("network_ssid", doc! { "$regex": ssid, "$options": "i" });
+        let ssid_str = ssid.trim();
+        if !ssid_str.is_empty() {
+            filter.insert("network_ssid", doc! { "$regex": ssid_str, "$options": "i" });
+        }
     }
     
     // Support date range filtering (date_from and date_till) or single date
@@ -417,8 +450,29 @@ async fn export_logs(
         .await
         .unwrap_or_else(|_| 0);
     
+    // Parse sort parameters (default to timestamp descending)
+    let sort_field = params.get("sort_by").unwrap_or(&"timestamp".to_string()).clone();
+    let sort_direction_str = params.get("sort_direction").unwrap_or(&"desc".to_string()).clone();
+    let sort_direction = if sort_direction_str == "asc" { 1 } else { -1 };
+    
+    // Map frontend column names to backend field names
+    let db_sort_field = match sort_field.as_str() {
+        "SSID" => "network_ssid",
+        "BSSID" => "network_bssid",
+        "Action" => "action",
+        "Timestamp" => "timestamp",
+        "Details" => "details",
+        "network_ssid" => "network_ssid",
+        "network_bssid" => "network_bssid",
+        "action" => "action",
+        "timestamp" => "timestamp",
+        "details" => "details",
+        _ => "timestamp", // Default to timestamp if unknown field
+    };
+    
     // Fetch all logs matching the filter (no pagination)
-    let mut cursor = match coll.find(filter).await {
+    let sort_options = doc! { db_sort_field: sort_direction };
+    let mut cursor = match coll.find(filter).sort(sort_options).await {
         Ok(cursor) => cursor,
         Err(e) => {
             return (
