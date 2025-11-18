@@ -325,6 +325,20 @@ async fn get_logs(
     if let Some(ssid) = params.get("ssid") {
         filter.insert("network_ssid", doc! { "$regex": ssid, "$options": "i" });
     }
+    // Support date range filtering (date_from and date_till) or single date
+    if let Some(date_from_str) = params.get("date_from") {
+        if let Ok(parsed_date) = chrono::NaiveDate::parse_from_str(date_from_str, "%Y-%m-%d") {
+            let start = Utc.from_utc_datetime(&parsed_date.and_hms_opt(0, 0, 0).unwrap());
+            filter.insert("timestamp", doc! { "$gte": DateTime::from_millis(start.timestamp_millis()) });
+        }
+    }
+    if let Some(date_till_str) = params.get("date_till") {
+        if let Ok(parsed_date) = chrono::NaiveDate::parse_from_str(date_till_str, "%Y-%m-%d") {
+            let end = Utc.from_utc_datetime(&parsed_date.and_hms_opt(23, 59, 59).unwrap());
+            filter.insert("timestamp", doc! { "$lte": DateTime::from_millis(end.timestamp_millis()) });
+        }
+    }
+    // Support legacy single date parameter
     if let Some(date_str) = params.get("date") {
         if let Ok(parsed_date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
             let start = Utc.from_utc_datetime(&parsed_date.and_hms_opt(0, 0, 0).unwrap());
@@ -358,6 +372,71 @@ async fn get_logs(
     }
     Json(serde_json::json!({ "total": total, "logs": results })).into_response()
 }
+
+async fn export_logs(
+    user: AuthUser,
+    Query(params): Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    let db = get_collection().await.expect("DB connection");
+    let coll: Collection<LogEntry> = db.collection("Logs");
+    let mut filter = doc! { "user_id": &user.user_id };
+    
+    // Apply same filters as get_logs but without pagination
+    if let Some(action) = params.get("action") {
+        filter.insert("action", action);
+    }
+    if let Some(ssid) = params.get("ssid") {
+        filter.insert("network_ssid", doc! { "$regex": ssid, "$options": "i" });
+    }
+    
+    // Support date range filtering (date_from and date_till) or single date
+    if let Some(date_from_str) = params.get("date_from") {
+        if let Ok(parsed_date) = chrono::NaiveDate::parse_from_str(date_from_str, "%Y-%m-%d") {
+            let start = Utc.from_utc_datetime(&parsed_date.and_hms_opt(0, 0, 0).unwrap());
+            filter.insert("timestamp", doc! { "$gte": DateTime::from_millis(start.timestamp_millis()) });
+        }
+    }
+    if let Some(date_till_str) = params.get("date_till") {
+        if let Ok(parsed_date) = chrono::NaiveDate::parse_from_str(date_till_str, "%Y-%m-%d") {
+            let end = Utc.from_utc_datetime(&parsed_date.and_hms_opt(23, 59, 59).unwrap());
+            filter.insert("timestamp", doc! { "$lte": DateTime::from_millis(end.timestamp_millis()) });
+        }
+    }
+    // Support legacy single date parameter
+    if let Some(date_str) = params.get("date") {
+        if let Ok(parsed_date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+            let start = Utc.from_utc_datetime(&parsed_date.and_hms_opt(0, 0, 0).unwrap());
+            let end = Utc.from_utc_datetime(&parsed_date.and_hms_opt(23, 59, 59).unwrap());
+            filter.insert("timestamp", doc! { "$gte": DateTime::from_millis(start.timestamp_millis()), "$lte": DateTime::from_millis(end.timestamp_millis()) });
+        }
+    }
+    
+    // Get total count
+    let total = coll
+        .count_documents(filter.clone())
+        .await
+        .unwrap_or_else(|_| 0);
+    
+    // Fetch all logs matching the filter (no pagination)
+    let mut cursor = match coll.find(filter).await {
+        Ok(cursor) => cursor,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    
+    let mut results = Vec::new();
+    while let Some(doc) = cursor.try_next().await.unwrap_or(None) {
+        results.push(doc);
+    }
+    
+    Json(serde_json::json!({ "total": total, "logs": results })).into_response()
+}
+
 //---------------------------------------------------------------------------- Login
 #[derive(Debug, Serialize, Deserialize)]
 pub struct User {
@@ -419,6 +498,58 @@ pub struct ResetPasswordConfirm {
 #[derive(Debug, Deserialize)]
 pub struct ResendVerificationRequest {
     pub email: String,
+}
+
+//---------------------------------------------------------------------------- Profile
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UserProfile {
+    #[serde(rename = "_id")]
+    pub id: ObjectId,
+    pub user_id: String,
+    pub profiling_preference: String, // "speed", "security", "balanced"
+    pub speed_network_preference: String, // "high", "medium", "low"
+    pub confidence_level: String, // "high", "medium", "low"
+    pub profile_type: String, // "personal", "work", "public"
+    pub network_preference: String, // "more_speed_less_security", "balanced", "more_security_less_speed"
+    pub preferred_authentication: Vec<String>, // e.g., ["WPA3", "WPA2"]
+    pub min_signal_strength: Option<i32>, // minimum signal strength percentage
+    pub max_risk_level: Option<String>, // "L", "M", "H", "C"
+}
+
+#[derive(Debug, Serialize)]
+pub struct UserProfileResponse {
+    pub id: String,
+    pub profiling_preference: String,
+    pub speed_network_preference: String,
+    pub confidence_level: String,
+    pub profile_type: String,
+    pub network_preference: String,
+    pub preferred_authentication: Vec<String>,
+    pub min_signal_strength: Option<i32>,
+    pub max_risk_level: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateProfileRequest {
+    pub profiling_preference: Option<String>,
+    pub speed_network_preference: Option<String>,
+    pub confidence_level: Option<String>,
+    pub profile_type: Option<String>,
+    pub network_preference: Option<String>,
+    pub preferred_authentication: Option<Vec<String>>,
+    pub min_signal_strength: Option<i32>,
+    pub max_risk_level: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChangeUsernameRequest {
+    pub username: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
 }
 
 static HTTP_CLIENT: Lazy<ReqwestClient> = Lazy::new(|| ReqwestClient::new());
@@ -965,6 +1096,258 @@ async fn reset_password_confirm_handler(
 
     (StatusCode::OK, Json(json!({"status": "password_updated"}))).into_response()
 }
+
+async fn get_user_profile(user: AuthUser) -> impl IntoResponse {
+    let db = get_collection().await.unwrap();
+    let profiles_doc: Collection<Document> = db.collection("UserProfiles");
+    let profiles: Collection<UserProfile> = db.collection("UserProfiles");
+    
+    match profiles.find_one(doc! { "user_id": &user.user_id }).await {
+        Ok(Some(profile)) => {
+            Json(UserProfileResponse {
+                id: profile.id.to_hex(),
+                profiling_preference: profile.profiling_preference,
+                speed_network_preference: profile.speed_network_preference,
+                confidence_level: profile.confidence_level,
+                profile_type: profile.profile_type,
+                network_preference: profile.network_preference,
+                preferred_authentication: profile.preferred_authentication,
+                min_signal_strength: profile.min_signal_strength,
+                max_risk_level: profile.max_risk_level,
+            }).into_response()
+        }
+        Ok(None) => {
+            // Create default profile if none exists
+            let default_profile = UserProfile {
+                id: ObjectId::new(),
+                user_id: user.user_id.clone(),
+                profiling_preference: "balanced".to_string(),
+                speed_network_preference: "medium".to_string(),
+                confidence_level: "medium".to_string(),
+                profile_type: "personal".to_string(),
+                network_preference: "balanced".to_string(),
+                preferred_authentication: vec!["WPA3".to_string(), "WPA2".to_string()],
+                min_signal_strength: Some(50),
+                max_risk_level: Some("M".to_string()),
+            };
+            let new_doc = doc! {
+                "user_id": &user.user_id,
+                "profiling_preference": &default_profile.profiling_preference,
+                "speed_network_preference": &default_profile.speed_network_preference,
+                "confidence_level": &default_profile.confidence_level,
+                "profile_type": &default_profile.profile_type,
+                "network_preference": &default_profile.network_preference,
+                "preferred_authentication": &default_profile.preferred_authentication,
+                "min_signal_strength": &default_profile.min_signal_strength,
+                "max_risk_level": &default_profile.max_risk_level,
+            };
+            profiles_doc.insert_one(new_doc).await.unwrap();
+            Json(UserProfileResponse {
+                id: default_profile.id.to_hex(),
+                profiling_preference: default_profile.profiling_preference,
+                speed_network_preference: default_profile.speed_network_preference,
+                confidence_level: default_profile.confidence_level,
+                profile_type: default_profile.profile_type,
+                network_preference: default_profile.network_preference,
+                preferred_authentication: default_profile.preferred_authentication,
+                min_signal_strength: default_profile.min_signal_strength,
+                max_risk_level: default_profile.max_risk_level,
+            }).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        ).into_response()
+    }
+}
+
+async fn update_user_profile(
+    user: AuthUser,
+    Json(payload): Json<UpdateProfileRequest>,
+) -> impl IntoResponse {
+    let db = get_collection().await.unwrap();
+    let profiles: Collection<Document> = db.collection("UserProfiles");
+    
+    let mut update_doc = doc! {};
+    
+    if let Some(ref val) = payload.profiling_preference {
+        update_doc.insert("profiling_preference", val);
+    }
+    if let Some(ref val) = payload.speed_network_preference {
+        update_doc.insert("speed_network_preference", val);
+    }
+    if let Some(ref val) = payload.confidence_level {
+        update_doc.insert("confidence_level", val);
+    }
+    if let Some(ref val) = payload.profile_type {
+        update_doc.insert("profile_type", val);
+    }
+    if let Some(ref val) = payload.network_preference {
+        update_doc.insert("network_preference", val);
+    }
+    if let Some(ref val) = payload.preferred_authentication {
+        update_doc.insert("preferred_authentication", val);
+    }
+    if let Some(val) = payload.min_signal_strength {
+        update_doc.insert("min_signal_strength", val);
+    }
+    if let Some(ref val) = payload.max_risk_level {
+        update_doc.insert("max_risk_level", val);
+    }
+    
+    if update_doc.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "No fields to update"})),
+        ).into_response();
+    }
+    
+    let filter = doc! { "user_id": &user.user_id };
+    let update = doc! { "$set": update_doc };
+    
+    match profiles.update_one(filter, update).await {
+        Ok(result) if result.matched_count > 0 => {
+            (StatusCode::OK, Json(json!({"status": "profile_updated"}))).into_response()
+        }
+        Ok(_) => {
+            // Create profile if it doesn't exist
+            let default_profile = doc! {
+                "user_id": &user.user_id,
+                "profiling_preference": payload.profiling_preference.unwrap_or_else(|| "balanced".to_string()),
+                "speed_network_preference": payload.speed_network_preference.unwrap_or_else(|| "medium".to_string()),
+                "confidence_level": payload.confidence_level.unwrap_or_else(|| "medium".to_string()),
+                "profile_type": payload.profile_type.unwrap_or_else(|| "personal".to_string()),
+                "network_preference": payload.network_preference.unwrap_or_else(|| "balanced".to_string()),
+                "preferred_authentication": payload.preferred_authentication.unwrap_or_else(|| vec!["WPA3".to_string(), "WPA2".to_string()]),
+                "min_signal_strength": payload.min_signal_strength.unwrap_or(50),
+                "max_risk_level": payload.max_risk_level.unwrap_or_else(|| "M".to_string()),
+            };
+            profiles.insert_one(default_profile).await.unwrap();
+            (StatusCode::OK, Json(json!({"status": "profile_created"}))).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        ).into_response()
+    }
+}
+
+async fn change_username_handler(
+    user: AuthUser,
+    Json(payload): Json<ChangeUsernameRequest>,
+) -> impl IntoResponse {
+    let db = get_collection().await.unwrap();
+    let users: Collection<Document> = db.collection("Users");
+    
+    let obj_id = match ObjectId::parse_str(&user.user_id) {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "Invalid user ID"})),
+            ).into_response();
+        }
+    };
+    
+    match users.update_one(
+        doc! { "_id": obj_id },
+        doc! { "$set": { "username": &payload.username } }
+    ).await {
+        Ok(result) if result.matched_count > 0 => {
+            (StatusCode::OK, Json(json!({"status": "username_updated", "username": payload.username}))).into_response()
+        }
+        Ok(_) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "User not found"})),
+        ).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        ).into_response()
+    }
+}
+
+async fn change_password_handler(
+    user: AuthUser,
+    Json(payload): Json<ChangePasswordRequest>,
+) -> impl IntoResponse {
+    let db = get_collection().await.unwrap();
+    let users: Collection<User> = db.collection("Users");
+    
+    let obj_id = match ObjectId::parse_str(&user.user_id) {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "Invalid user ID"})),
+            ).into_response();
+        }
+    };
+    
+    let user_doc = match users.find_one(doc! { "_id": obj_id }).await {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "User not found"})),
+            ).into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": e.to_string()})),
+            ).into_response();
+        }
+    };
+    
+    // Verify current password
+    let valid = match verify(&payload.current_password, &user_doc.password_hash) {
+        Ok(is_valid) => is_valid,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Password verification failed"})),
+            ).into_response();
+        }
+    };
+    
+    if !valid {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Invalid current password"})),
+        ).into_response();
+    }
+    
+    // Hash new password
+    let password_hash = match hash(&payload.new_password, 10) {
+        Ok(hash) => hash,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Failed to hash password"})),
+            ).into_response();
+        }
+    };
+    
+    // Update password
+    match users.update_one(
+        doc! { "_id": obj_id },
+        doc! { "$set": { "password_hash": &password_hash } }
+    ).await {
+        Ok(result) if result.matched_count > 0 => {
+            (StatusCode::OK, Json(json!({"status": "password_updated"}))).into_response()
+        }
+        Ok(_) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "User not found"})),
+        ).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": e.to_string()})),
+        ).into_response()
+    }
+}
+
 //-----------------------------------------------------------------------------------------------
 #[tokio::main]
 async fn main() {
@@ -985,6 +1368,10 @@ async fn main() {
         .route("/whitelist", get(get_whitelist).post(add_to_whitelist))
         .route("/whitelist/{id}", delete(delete_from_whitelist))
         .route("/logs", get(get_logs).post(add_log))
+        .route("/logs/export", get(export_logs))
+        .route("/profile", get(get_user_profile).post(update_user_profile))
+        .route("/profile/username", post(change_username_handler))
+        .route("/profile/password", post(change_password_handler))
         .layer(cors);
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     let listener = TcpListener::bind(addr).await.unwrap();
