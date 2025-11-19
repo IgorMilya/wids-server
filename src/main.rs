@@ -491,6 +491,632 @@ async fn export_logs(
     Json(serde_json::json!({ "total": total, "logs": results })).into_response()
 }
 
+//-----------------------------------------------------------------------------------Analytics
+#[derive(Debug, Serialize)]
+pub struct AnalyticsResponse {
+    pub security_metrics: SecurityMetrics,
+    pub connection_stats: ConnectionStats,
+    pub blacklist_whitelist: BlacklistWhitelistStats,
+    pub user_activity: UserActivityStats,
+    pub network_stats: NetworkStats,
+    pub time_series: TimeSeriesData,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SecurityMetrics {
+    pub high_risk_connections: i64,
+    pub medium_risk_connections: i64,
+    pub low_risk_connections: i64,
+    pub failed_attempts: i64,
+    pub successful_connections: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConnectionStats {
+    pub total_connections: i64,
+    pub connection_success_rate: f64,
+    pub total_scan_attempts: i64,
+    pub avg_connections_per_day: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BlacklistWhitelistStats {
+    pub total_blacklisted: i64,
+    pub total_whitelisted: i64,
+    pub blacklist_additions: i64,
+    pub blacklist_removals: i64,
+    pub whitelist_additions: i64,
+    pub whitelist_removals: i64,
+    pub blacklist_additions_today: i64,
+    pub blacklist_removals_today: i64,
+    pub whitelist_additions_today: i64,
+    pub whitelist_removals_today: i64,
+    pub blacklist_additions_week: i64,
+    pub blacklist_removals_week: i64,
+    pub whitelist_additions_week: i64,
+    pub whitelist_removals_week: i64,
+    pub blacklist_additions_month: i64,
+    pub blacklist_removals_month: i64,
+    pub whitelist_additions_month: i64,
+    pub whitelist_removals_month: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UserActivityStats {
+    pub password_changes: i64,
+    pub username_changes: i64,
+    pub profile_updates: i64,
+    pub profile_save_attempts: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NetworkStats {
+    pub most_scanned_networks: Vec<NetworkScanCount>,
+    pub unique_networks_scanned: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NetworkScanCount {
+    pub ssid: String,
+    pub scan_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TimeSeriesData {
+    pub daily_activity: Vec<DailyActivity>,
+    pub hourly_activity: Vec<HourlyActivity>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DailyActivity {
+    pub date: String,
+    pub scans: i64,
+    pub connections: i64,
+    pub blacklist_adds: i64,
+    pub whitelist_adds: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HourlyActivity {
+    pub hour: i32,
+    pub activity_count: i64,
+}
+
+async fn get_analytics(user: AuthUser) -> impl IntoResponse {
+    let db = get_collection().await.expect("DB connection");
+    let logs_coll: Collection<Document> = db.collection("Logs");
+    let blacklist_coll: Collection<Document> = db.collection("Blacklist");
+    let whitelist_coll: Collection<Document> = db.collection("Whitelist");
+    
+    let user_filter = doc! { "user_id": &user.user_id };
+    
+    // Security Metrics - Count connections by risk level (from details field)
+    // Match patterns like "Risk level: C", "Risk level: H", "risk.*[Cc]", "risk.*[Hh]", etc.
+    let high_risk = logs_coll.count_documents(
+        doc! { 
+            "user_id": &user.user_id,
+            "$and": [
+                {
+                    "$or": [
+                        { "action": "CONNECTED" },
+                        { "action": "CONNECTED_RETRY" },
+                    ]
+                },
+                {
+                    "$or": [
+                        { "details": { "$regex": r"Risk level:\s*[CH]", "$options": "i" } },
+                        { "details": { "$regex": r"risk.*[Hh]", "$options": "i" } },
+                        { "details": { "$regex": r"risk.*[Cc]", "$options": "i" } },
+                        { "details": { "$regex": r"\(Critical\)|\(High\)", "$options": "i" } },
+                    ]
+                }
+            ]
+        }
+    ).await.unwrap_or(0) as i64;
+    
+    let medium_risk = logs_coll.count_documents(
+        doc! { 
+            "user_id": &user.user_id,
+            "$and": [
+                {
+                    "$or": [
+                        { "action": "CONNECTED" },
+                        { "action": "CONNECTED_RETRY" },
+                    ]
+                },
+                {
+                    "$or": [
+                        { "details": { "$regex": r"Risk level:\s*M", "$options": "i" } },
+                        { "details": { "$regex": r"risk.*[Mm]", "$options": "i" } },
+                        { "details": { "$regex": r"\(Medium\)", "$options": "i" } },
+                    ]
+                }
+            ]
+        }
+    ).await.unwrap_or(0) as i64;
+    
+    let low_risk = logs_coll.count_documents(
+        doc! { 
+            "user_id": &user.user_id,
+            "$and": [
+                {
+                    "$or": [
+                        { "action": "CONNECTED" },
+                        { "action": "CONNECTED_RETRY" },
+                    ]
+                },
+                {
+                    "$or": [
+                        { "details": { "$regex": r"Risk level:\s*L", "$options": "i" } },
+                        { "details": { "$regex": r"risk.*[Ll]", "$options": "i" } },
+                        { "details": { "$regex": r"\(Low\)|\(Whitelisted\)", "$options": "i" } },
+                    ]
+                }
+            ]
+        }
+    ).await.unwrap_or(0) as i64;
+    
+    // Failed attempts - CONNECT_FAILED or connection retries
+    let failed_attempts = logs_coll.count_documents(
+        doc! { 
+            "user_id": &user.user_id,
+            "$or": [
+                { "action": { "$regex": "FAILED", "$options": "i" } },
+                { "action": "CONNECTED_RETRY" },
+            ]
+        }
+    ).await.unwrap_or(0) as i64;
+    
+    // Successful connections
+    let successful_connections = logs_coll.count_documents(
+        doc! { "user_id": &user.user_id, "action": "CONNECTED" }
+    ).await.unwrap_or(0) as i64;
+    
+    // Connection Stats
+    let total_connections = logs_coll.count_documents(
+        doc! { 
+            "user_id": &user.user_id,
+            "$or": [
+                { "action": "CONNECTED" },
+                { "action": "CONNECTED_RETRY" },
+            ]
+        }
+    ).await.unwrap_or(0) as i64;
+    
+    let total_scans = logs_coll.count_documents(
+        doc! { "user_id": &user.user_id, "action": "SCAN_START" }
+    ).await.unwrap_or(0) as i64;
+    
+    let connection_success_rate = if total_connections > 0 {
+        (successful_connections as f64 / total_connections as f64) * 100.0
+    } else {
+        0.0
+    };
+    
+    // Calculate days since first log (for avg per day)
+    let first_log = logs_coll.find_one(
+        doc! { "user_id": &user.user_id }
+    ).sort(doc! { "timestamp": 1 }).await.ok().flatten();
+    
+    let days_active = if let Some(log) = first_log {
+        if let Some(ts) = log.get("timestamp").and_then(|v| v.as_datetime()) {
+            let now = DateTime::now();
+            let diff = now.timestamp_millis() - ts.timestamp_millis();
+            (diff as f64 / (24.0 * 60.0 * 60.0 * 1000.0)).max(1.0)
+        } else {
+            1.0
+        }
+    } else {
+        1.0
+    };
+    
+    let avg_connections_per_day = total_connections as f64 / days_active;
+    
+    // Blacklist/Whitelist Stats
+    let total_blacklisted = blacklist_coll.count_documents(user_filter.clone()).await.unwrap_or(0) as i64;
+    let total_whitelisted = whitelist_coll.count_documents(user_filter.clone()).await.unwrap_or(0) as i64;
+    
+    let blacklist_additions = logs_coll.count_documents(
+        doc! { "user_id": &user.user_id, "action": "BLACKLIST_ADD" }
+    ).await.unwrap_or(0) as i64;
+    
+    let blacklist_removals = logs_coll.count_documents(
+        doc! { "user_id": &user.user_id, "action": "BLACKLIST_DELETE" }
+    ).await.unwrap_or(0) as i64;
+    
+    let whitelist_additions = logs_coll.count_documents(
+        doc! { "user_id": &user.user_id, "action": "WHITELIST_ADD" }
+    ).await.unwrap_or(0) as i64;
+    
+    let whitelist_removals = logs_coll.count_documents(
+        doc! { "user_id": &user.user_id, "action": "WHITELIST_DELETE" }
+    ).await.unwrap_or(0) as i64;
+    
+    // Time-based filtering for blacklist/whitelist stats
+    let today_start = DateTime::from_millis(
+        Utc::now().timestamp_millis() - ((Utc::now().timestamp() % (24 * 60 * 60)) * 1000)
+    );
+    let week_ago = DateTime::from_millis(
+        Utc::now().timestamp_millis() - (7 * 24 * 60 * 60 * 1000)
+    );
+    let month_ago = DateTime::from_millis(
+        Utc::now().timestamp_millis() - (30 * 24 * 60 * 60 * 1000)
+    );
+    
+    let blacklist_additions_today = logs_coll.count_documents(
+        doc! { 
+            "user_id": &user.user_id, 
+            "action": "BLACKLIST_ADD",
+            "timestamp": doc! { "$gte": today_start }
+        }
+    ).await.unwrap_or(0) as i64;
+    
+    let blacklist_removals_today = logs_coll.count_documents(
+        doc! { 
+            "user_id": &user.user_id, 
+            "action": "BLACKLIST_DELETE",
+            "timestamp": doc! { "$gte": today_start }
+        }
+    ).await.unwrap_or(0) as i64;
+    
+    let whitelist_additions_today = logs_coll.count_documents(
+        doc! { 
+            "user_id": &user.user_id, 
+            "action": "WHITELIST_ADD",
+            "timestamp": doc! { "$gte": today_start }
+        }
+    ).await.unwrap_or(0) as i64;
+    
+    let whitelist_removals_today = logs_coll.count_documents(
+        doc! { 
+            "user_id": &user.user_id, 
+            "action": "WHITELIST_DELETE",
+            "timestamp": doc! { "$gte": today_start }
+        }
+    ).await.unwrap_or(0) as i64;
+    
+    let blacklist_additions_week = logs_coll.count_documents(
+        doc! { 
+            "user_id": &user.user_id, 
+            "action": "BLACKLIST_ADD",
+            "timestamp": doc! { "$gte": week_ago }
+        }
+    ).await.unwrap_or(0) as i64;
+    
+    let blacklist_removals_week = logs_coll.count_documents(
+        doc! { 
+            "user_id": &user.user_id, 
+            "action": "BLACKLIST_DELETE",
+            "timestamp": doc! { "$gte": week_ago }
+        }
+    ).await.unwrap_or(0) as i64;
+    
+    let whitelist_additions_week = logs_coll.count_documents(
+        doc! { 
+            "user_id": &user.user_id, 
+            "action": "WHITELIST_ADD",
+            "timestamp": doc! { "$gte": week_ago }
+        }
+    ).await.unwrap_or(0) as i64;
+    
+    let whitelist_removals_week = logs_coll.count_documents(
+        doc! { 
+            "user_id": &user.user_id, 
+            "action": "WHITELIST_DELETE",
+            "timestamp": doc! { "$gte": week_ago }
+        }
+    ).await.unwrap_or(0) as i64;
+    
+    let blacklist_additions_month = logs_coll.count_documents(
+        doc! { 
+            "user_id": &user.user_id, 
+            "action": "BLACKLIST_ADD",
+            "timestamp": doc! { "$gte": month_ago }
+        }
+    ).await.unwrap_or(0) as i64;
+    
+    let blacklist_removals_month = logs_coll.count_documents(
+        doc! { 
+            "user_id": &user.user_id, 
+            "action": "BLACKLIST_DELETE",
+            "timestamp": doc! { "$gte": month_ago }
+        }
+    ).await.unwrap_or(0) as i64;
+    
+    let whitelist_additions_month = logs_coll.count_documents(
+        doc! { 
+            "user_id": &user.user_id, 
+            "action": "WHITELIST_ADD",
+            "timestamp": doc! { "$gte": month_ago }
+        }
+    ).await.unwrap_or(0) as i64;
+    
+    let whitelist_removals_month = logs_coll.count_documents(
+        doc! { 
+            "user_id": &user.user_id, 
+            "action": "WHITELIST_DELETE",
+            "timestamp": doc! { "$gte": month_ago }
+        }
+    ).await.unwrap_or(0) as i64;
+    
+    // User Activity Stats
+    let password_changes = logs_coll.count_documents(
+        doc! { "user_id": &user.user_id, "action": "PASSWORD_CHANGED" }
+    ).await.unwrap_or(0) as i64;
+    
+    let username_changes = logs_coll.count_documents(
+        doc! { "user_id": &user.user_id, "action": "USERNAME_CHANGED" }
+    ).await.unwrap_or(0) as i64;
+    
+    let profile_updates = logs_coll.count_documents(
+        doc! { 
+            "user_id": &user.user_id,
+            "$or": [
+                { "action": "PROFILE_UPDATED" },
+                { "action": { "$regex": "PROFILE_SETTING_CHANGED", "$options": "i" } },
+            ]
+        }
+    ).await.unwrap_or(0) as i64;
+    
+    let profile_save_attempts = logs_coll.count_documents(
+        doc! { "user_id": &user.user_id, "action": "PROFILE_SAVE_ATTEMPTED" }
+    ).await.unwrap_or(0) as i64;
+    
+    // Network Stats - Most scanned networks (count all actions by network_ssid, exclude empty/null/"-")
+    let pipeline = vec![
+        doc! {
+            "$match": doc! { 
+                "user_id": &user.user_id,
+                "network_ssid": doc! { "$exists": true, "$ne": "", "$ne": "-", "$ne": null }
+            }
+        },
+        doc! {
+            "$group": doc! {
+                "_id": "$network_ssid",
+                "count": doc! { "$sum": 1 }
+            }
+        },
+        doc! {
+            "$sort": doc! { "count": -1 }
+        },
+        doc! {
+            "$limit": 10
+        },
+    ];
+    
+    let mut most_scanned = Vec::new();
+    match logs_coll.aggregate(pipeline).await {
+        Ok(mut cursor) => {
+            while let Ok(Some(doc)) = cursor.try_next().await {
+                if let (Some(ssid), Some(count)) = (
+                    doc.get("_id").and_then(|v| v.as_str()),
+                    doc.get("count").and_then(|v| v.as_i64()),
+                ) {
+                    // Only add non-empty SSIDs
+                    if !ssid.is_empty() && ssid != "-" {
+                        most_scanned.push(NetworkScanCount {
+                            ssid: ssid.to_string(),
+                            scan_count: count,
+                        });
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Error aggregating most scanned networks: {}", e);
+        }
+    }
+    
+    // Unique networks scanned (exclude empty/null/"-")
+    let unique_networks_pipeline = vec![
+        doc! {
+            "$match": doc! { 
+                "user_id": &user.user_id,
+                "network_ssid": doc! { "$exists": true, "$ne": "", "$ne": "-", "$ne": null }
+            }
+        },
+        doc! {
+            "$group": doc! {
+                "_id": "$network_ssid"
+            }
+        },
+        doc! {
+            "$count": "total"
+        },
+    ];
+    
+    let unique_networks = {
+        let mut unique_cursor = match logs_coll.aggregate(unique_networks_pipeline).await {
+            Ok(cursor) => cursor,
+            Err(_) => return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Failed to aggregate unique networks"})),
+            ).into_response(),
+        };
+        if let Some(doc) = unique_cursor.try_next().await.unwrap_or(None) {
+            doc.get("total").and_then(|v| v.as_i64()).unwrap_or(0)
+        } else {
+            0
+        }
+    };
+    
+    // Time Series Data - Daily activity for last 30 days
+    let thirty_days_ago = DateTime::from_millis(
+        Utc::now().timestamp_millis() - (30 * 24 * 60 * 60 * 1000)
+    );
+    
+    let daily_pipeline = vec![
+        doc! {
+            "$match": doc! {
+                "user_id": &user.user_id,
+                "timestamp": doc! { "$gte": thirty_days_ago }
+            }
+        },
+        doc! {
+            "$group": doc! {
+                "_id": doc! {
+                    "$dateToString": doc! {
+                        "format": "%Y-%m-%d",
+                        "date": "$timestamp"
+                    }
+                },
+                "scans": doc! {
+                    "$sum": doc! {
+                        "$cond": [doc! { "$eq": ["$action", "SCAN_START"] }, 1, 0]
+                    }
+                },
+                "connections": doc! {
+                    "$sum": doc! {
+                        "$cond": [
+                            doc! { "$in": ["$action", vec!["CONNECTED", "CONNECTED_RETRY"] ] },
+                            1,
+                            0
+                        ]
+                    }
+                },
+                "blacklist_adds": doc! {
+                    "$sum": doc! {
+                        "$cond": [doc! { "$eq": ["$action", "BLACKLIST_ADD"] }, 1, 0]
+                    }
+                },
+                "whitelist_adds": doc! {
+                    "$sum": doc! {
+                        "$cond": [doc! { "$eq": ["$action", "WHITELIST_ADD"] }, 1, 0]
+                    }
+                },
+            }
+        },
+        doc! {
+            "$sort": doc! { "_id": 1 }
+        },
+    ];
+    
+    let mut daily_activity = Vec::new();
+    match logs_coll.aggregate(daily_pipeline).await {
+        Ok(mut daily_cursor) => {
+            while let Ok(Some(doc)) = daily_cursor.try_next().await {
+                if let Some(date) = doc.get("_id").and_then(|v| v.as_str()) {
+                    daily_activity.push(DailyActivity {
+                        date: date.to_string(),
+                        scans: doc.get("scans").and_then(|v| v.as_i64()).unwrap_or(0),
+                        connections: doc.get("connections").and_then(|v| v.as_i64()).unwrap_or(0),
+                        blacklist_adds: doc.get("blacklist_adds").and_then(|v| v.as_i64()).unwrap_or(0),
+                        whitelist_adds: doc.get("whitelist_adds").and_then(|v| v.as_i64()).unwrap_or(0),
+                    });
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Error aggregating daily activity: {}", e);
+        }
+    }
+    
+    // Hourly activity (last 7 days)
+    let seven_days_ago = DateTime::from_millis(
+        Utc::now().timestamp_millis() - (7 * 24 * 60 * 60 * 1000)
+    );
+    
+    let hourly_pipeline = vec![
+        doc! {
+            "$match": doc! {
+                "user_id": &user.user_id,
+                "timestamp": doc! { "$gte": seven_days_ago }
+            }
+        },
+        doc! {
+            "$group": doc! {
+                "_id": doc! {
+                    "$hour": "$timestamp"
+                },
+                "count": doc! { "$sum": 1 }
+            }
+        },
+        doc! {
+            "$sort": doc! { "_id": 1 }
+        },
+    ];
+    
+    let mut hourly_activity = Vec::new();
+    match logs_coll.aggregate(hourly_pipeline).await {
+        Ok(mut hourly_cursor) => {
+            while let Ok(Some(doc)) = hourly_cursor.try_next().await {
+                if let (Some(hour), Some(count)) = (
+                    doc.get("_id").and_then(|v| v.as_i32()),
+                    doc.get("count").and_then(|v| v.as_i64()),
+                ) {
+                    hourly_activity.push(HourlyActivity {
+                        hour,
+                        activity_count: count,
+                    });
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Error aggregating hourly activity: {}", e);
+        }
+    }
+    
+    // Fill missing hours with 0
+    for hour in 0..24 {
+        if !hourly_activity.iter().any(|h| h.hour == hour) {
+            hourly_activity.push(HourlyActivity { hour, activity_count: 0 });
+        }
+    }
+    hourly_activity.sort_by_key(|h| h.hour);
+    
+    let analytics = AnalyticsResponse {
+        security_metrics: SecurityMetrics {
+            high_risk_connections: high_risk,
+            medium_risk_connections: medium_risk,
+            low_risk_connections: low_risk,
+            failed_attempts,
+            successful_connections,
+        },
+        connection_stats: ConnectionStats {
+            total_connections,
+            connection_success_rate,
+            total_scan_attempts: total_scans,
+            avg_connections_per_day,
+        },
+        blacklist_whitelist: BlacklistWhitelistStats {
+            total_blacklisted,
+            total_whitelisted,
+            blacklist_additions,
+            blacklist_removals,
+            whitelist_additions,
+            whitelist_removals,
+            blacklist_additions_today,
+            blacklist_removals_today,
+            whitelist_additions_today,
+            whitelist_removals_today,
+            blacklist_additions_week,
+            blacklist_removals_week,
+            whitelist_additions_week,
+            whitelist_removals_week,
+            blacklist_additions_month,
+            blacklist_removals_month,
+            whitelist_additions_month,
+            whitelist_removals_month,
+        },
+        user_activity: UserActivityStats {
+            password_changes,
+            username_changes,
+            profile_updates,
+            profile_save_attempts,
+        },
+        network_stats: NetworkStats {
+            most_scanned_networks: most_scanned,
+            unique_networks_scanned: unique_networks,
+        },
+        time_series: TimeSeriesData {
+            daily_activity,
+            hourly_activity,
+        },
+    };
+    
+    Json(analytics).into_response()
+}
+
 //---------------------------------------------------------------------------- Login
 #[derive(Debug, Serialize, Deserialize)]
 pub struct User {
@@ -1426,6 +2052,7 @@ async fn main() {
         .route("/profile", get(get_user_profile).post(update_user_profile))
         .route("/profile/username", post(change_username_handler))
         .route("/profile/password", post(change_password_handler))
+        .route("/analytics", get(get_analytics))
         .layer(cors);
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     let listener = TcpListener::bind(addr).await.unwrap();
