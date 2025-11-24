@@ -492,325 +492,325 @@ async fn export_logs(
 }
 
 //-----------------------------------------------------------------------------------Threats
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Threat {
-    #[serde(rename = "_id")]
-    pub id: ObjectId,
-    pub user_id: String,
-    pub threat_type: String,
-    pub severity: String,
-    pub network_ssid: String,
-    pub network_bssid: String,
-    pub details: String,
-    #[serde(serialize_with = "serialize_datetime_as_iso_string")]
-    pub timestamp: DateTime,
-    pub acknowledged: bool,
-}
+// #[derive(Debug, Serialize, Deserialize)]
+// pub struct Threat {
+//     #[serde(rename = "_id")]
+//     pub id: ObjectId,
+//     pub user_id: String,
+//     pub threat_type: String,
+//     pub severity: String,
+//     pub network_ssid: String,
+//     pub network_bssid: String,
+//     pub details: String,
+//     #[serde(serialize_with = "serialize_datetime_as_iso_string")]
+//     pub timestamp: DateTime,
+//     pub acknowledged: bool,
+// }
 
-#[derive(Debug, Deserialize)]
-pub struct ThreatAlert {
-    pub threat_type: String,
-    pub severity: String,
-    pub network_ssid: String,
-    pub network_bssid: String,
-    pub details: String,
-    pub timestamp: String, // ISO 8601 string
-}
+// #[derive(Debug, Deserialize)]
+// pub struct ThreatAlert {
+//     pub threat_type: String,
+//     pub severity: String,
+//     pub network_ssid: String,
+//     pub network_bssid: String,
+//     pub details: String,
+//     pub timestamp: String, // ISO 8601 string
+// }
 
-#[derive(Debug, Serialize)]
-pub struct ThreatResponse {
-    pub id: String,
-    pub threat_type: String,
-    pub severity: String,
-    pub network_ssid: String,
-    pub network_bssid: String,
-    pub details: String,
-    #[serde(serialize_with = "serialize_datetime_as_iso_string")]
-    pub timestamp: DateTime,
-    pub acknowledged: bool,
-}
+// #[derive(Debug, Serialize)]
+// pub struct ThreatResponse {
+//     pub id: String,
+//     pub threat_type: String,
+//     pub severity: String,
+//     pub network_ssid: String,
+//     pub network_bssid: String,
+//     pub details: String,
+//     #[serde(serialize_with = "serialize_datetime_as_iso_string")]
+//     pub timestamp: DateTime,
+//     pub acknowledged: bool,
+// }
 
-async fn add_threat_alert(user: AuthUser, Json(payload): JsonExtract<ThreatAlert>) -> impl IntoResponse {
-    let db = get_collection().await.expect("DB connection");
-    let threats_coll: Collection<Document> = db.collection("Threats");
-    let logs_coll: Collection<Document> = db.collection("Logs");
+// async fn add_threat_alert(user: AuthUser, Json(payload): JsonExtract<ThreatAlert>) -> impl IntoResponse {
+//     let db = get_collection().await.expect("DB connection");
+//     let threats_coll: Collection<Document> = db.collection("Threats");
+//     let logs_coll: Collection<Document> = db.collection("Logs");
     
-    // Parse timestamp from ISO 8601 string
-    let timestamp = match chrono::DateTime::parse_from_rfc3339(&payload.timestamp) {
-        Ok(dt) => DateTime::from_millis(dt.timestamp_millis()),
-        Err(_) => DateTime::now(),
-    };
+//     // Parse timestamp from ISO 8601 string
+//     let timestamp = match chrono::DateTime::parse_from_rfc3339(&payload.timestamp) {
+//         Ok(dt) => DateTime::from_millis(dt.timestamp_millis()),
+//         Err(_) => DateTime::now(),
+//     };
     
-    let new_doc = doc! {
-        "user_id": &user.user_id,
-        "threat_type": &payload.threat_type,
-        "severity": &payload.severity,
-        "network_ssid": &payload.network_ssid,
-        "network_bssid": &payload.network_bssid,
-        "details": &payload.details,
-        "timestamp": timestamp,
-        "acknowledged": false,
-    };
+//     let new_doc = doc! {
+//         "user_id": &user.user_id,
+//         "threat_type": &payload.threat_type,
+//         "severity": &payload.severity,
+//         "network_ssid": &payload.network_ssid,
+//         "network_bssid": &payload.network_bssid,
+//         "details": &payload.details,
+//         "timestamp": timestamp,
+//         "acknowledged": false,
+//     };
     
-    match threats_coll.insert_one(new_doc.clone()).await {
-        Ok(_) => {
-            // Also log to logs collection
-            let log_doc = doc! {
-                "user_id": &user.user_id,
-                "network_ssid": &payload.network_ssid,
-                "network_bssid": &payload.network_bssid,
-                "action": "THREAT_DETECTED",
-                "timestamp": timestamp,
-                "details": format!("{}: {}", payload.threat_type, payload.details),
-            };
-            let _ = logs_coll.insert_one(log_doc).await;
+//     match threats_coll.insert_one(new_doc.clone()).await {
+//         Ok(_) => {
+//             // Also log to logs collection
+//             let log_doc = doc! {
+//                 "user_id": &user.user_id,
+//                 "network_ssid": &payload.network_ssid,
+//                 "network_bssid": &payload.network_bssid,
+//                 "action": "THREAT_DETECTED",
+//                 "timestamp": timestamp,
+//                 "details": format!("{}: {}", payload.threat_type, payload.details),
+//             };
+//             let _ = logs_coll.insert_one(log_doc).await;
             
-            (
-                StatusCode::CREATED,
-                Json(serde_json::json!({"status": "threat_alerted"})),
-            )
-                .into_response()
-        }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
-    }
-}
+//             (
+//                 StatusCode::CREATED,
+//                 Json(serde_json::json!({"status": "threat_alerted"})),
+//             )
+//                 .into_response()
+//         }
+//         Err(e) => (
+//             StatusCode::INTERNAL_SERVER_ERROR,
+//             Json(serde_json::json!({"error": e.to_string()})),
+//         )
+//             .into_response(),
+//     }
+// }
 
-async fn get_threats(
-    user: AuthUser,
-    Query(params): Query<HashMap<String, String>>,
-) -> impl IntoResponse {
-    let db = get_collection().await.expect("DB connection");
-    let coll: Collection<Document> = db.collection("Threats");
+// async fn get_threats(
+//     user: AuthUser,
+//     Query(params): Query<HashMap<String, String>>,
+// ) -> impl IntoResponse {
+//     let db = get_collection().await.expect("DB connection");
+//     let coll: Collection<Document> = db.collection("Threats");
     
-    let mut filter = doc! { "user_id": &user.user_id };
+//     let mut filter = doc! { "user_id": &user.user_id };
     
-    // Optional filters
-    if let Some(severity) = params.get("severity") {
-        filter.insert("severity", doc! { "$regex": severity, "$options": "i" });
-    }
-    if let Some(threat_type) = params.get("threat_type") {
-        filter.insert("threat_type", doc! { "$regex": threat_type, "$options": "i" });
-    }
-    if let Some(acknowledged) = params.get("acknowledged") {
-        if let Ok(ack) = acknowledged.parse::<bool>() {
-            filter.insert("acknowledged", ack);
-        }
-    }
+//     // Optional filters
+//     if let Some(severity) = params.get("severity") {
+//         filter.insert("severity", doc! { "$regex": severity, "$options": "i" });
+//     }
+//     if let Some(threat_type) = params.get("threat_type") {
+//         filter.insert("threat_type", doc! { "$regex": threat_type, "$options": "i" });
+//     }
+//     if let Some(acknowledged) = params.get("acknowledged") {
+//         if let Ok(ack) = acknowledged.parse::<bool>() {
+//             filter.insert("acknowledged", ack);
+//         }
+//     }
     
-    // Date filtering
-    if let Some(date_from_str) = params.get("date_from") {
-        if let Ok(parsed_date) = chrono::NaiveDate::parse_from_str(date_from_str, "%Y-%m-%d") {
-            let start = Utc.from_utc_datetime(&parsed_date.and_hms_opt(0, 0, 0).unwrap());
-            filter.insert("timestamp", doc! { "$gte": DateTime::from_millis(start.timestamp_millis()) });
-        }
-    }
-    if let Some(date_till_str) = params.get("date_till") {
-        if let Ok(parsed_date) = chrono::NaiveDate::parse_from_str(date_till_str, "%Y-%m-%d") {
-            let end = Utc.from_utc_datetime(&parsed_date.and_hms_opt(23, 59, 59).unwrap());
-            filter.insert("timestamp", doc! { "$lte": DateTime::from_millis(end.timestamp_millis()) });
-        }
-    }
+//     // Date filtering
+//     if let Some(date_from_str) = params.get("date_from") {
+//         if let Ok(parsed_date) = chrono::NaiveDate::parse_from_str(date_from_str, "%Y-%m-%d") {
+//             let start = Utc.from_utc_datetime(&parsed_date.and_hms_opt(0, 0, 0).unwrap());
+//             filter.insert("timestamp", doc! { "$gte": DateTime::from_millis(start.timestamp_millis()) });
+//         }
+//     }
+//     if let Some(date_till_str) = params.get("date_till") {
+//         if let Ok(parsed_date) = chrono::NaiveDate::parse_from_str(date_till_str, "%Y-%m-%d") {
+//             let end = Utc.from_utc_datetime(&parsed_date.and_hms_opt(23, 59, 59).unwrap());
+//             filter.insert("timestamp", doc! { "$lte": DateTime::from_millis(end.timestamp_millis()) });
+//         }
+//     }
     
-    // Limit (default 50)
-    let limit: i64 = params
-        .get("limit")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(50);
+//     // Limit (default 50)
+//     let limit: i64 = params
+//         .get("limit")
+//         .and_then(|v| v.parse().ok())
+//         .unwrap_or(50);
     
-    let mut cursor = match coll.find(filter).sort(doc! { "timestamp": -1 }).limit(limit).await {
-        Ok(cursor) => cursor,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": e.to_string()})),
-            )
-                .into_response();
-        }
-    };
+//     let mut cursor = match coll.find(filter).sort(doc! { "timestamp": -1 }).limit(limit).await {
+//         Ok(cursor) => cursor,
+//         Err(e) => {
+//             return (
+//                 StatusCode::INTERNAL_SERVER_ERROR,
+//                 Json(json!({"error": e.to_string()})),
+//             )
+//                 .into_response();
+//         }
+//     };
     
-    let mut results = Vec::new();
-    while let Ok(Some(doc)) = cursor.try_next().await {
-        if let (Some(id), Some(threat_type), Some(severity), Some(network_ssid), Some(network_bssid), Some(details), Some(timestamp), Some(acknowledged)) = (
-            doc.get("_id").and_then(|v| v.as_object_id()),
-            doc.get("threat_type").and_then(|v| v.as_str()),
-            doc.get("severity").and_then(|v| v.as_str()),
-            doc.get("network_ssid").and_then(|v| v.as_str()),
-            doc.get("network_bssid").and_then(|v| v.as_str()),
-            doc.get("details").and_then(|v| v.as_str()),
-            doc.get("timestamp").and_then(|v| v.as_datetime()),
-            doc.get("acknowledged").and_then(|v| v.as_bool()),
-        ) {
-            results.push(ThreatResponse {
-                id: id.to_hex(),
-                threat_type: threat_type.to_string(),
-                severity: severity.to_string(),
-                network_ssid: network_ssid.to_string(),
-                network_bssid: network_bssid.to_string(),
-                details: details.to_string(),
-                timestamp: *timestamp,
-                acknowledged,
-            });
-        }
-    }
+//     let mut results = Vec::new();
+//     while let Ok(Some(doc)) = cursor.try_next().await {
+//         if let (Some(id), Some(threat_type), Some(severity), Some(network_ssid), Some(network_bssid), Some(details), Some(timestamp), Some(acknowledged)) = (
+//             doc.get("_id").and_then(|v| v.as_object_id()),
+//             doc.get("threat_type").and_then(|v| v.as_str()),
+//             doc.get("severity").and_then(|v| v.as_str()),
+//             doc.get("network_ssid").and_then(|v| v.as_str()),
+//             doc.get("network_bssid").and_then(|v| v.as_str()),
+//             doc.get("details").and_then(|v| v.as_str()),
+//             doc.get("timestamp").and_then(|v| v.as_datetime()),
+//             doc.get("acknowledged").and_then(|v| v.as_bool()),
+//         ) {
+//             results.push(ThreatResponse {
+//                 id: id.to_hex(),
+//                 threat_type: threat_type.to_string(),
+//                 severity: severity.to_string(),
+//                 network_ssid: network_ssid.to_string(),
+//                 network_bssid: network_bssid.to_string(),
+//                 details: details.to_string(),
+//                 timestamp: *timestamp,
+//                 acknowledged,
+//             });
+//         }
+//     }
     
-    Json(serde_json::json!({ "threats": results })).into_response()
-}
+//     Json(serde_json::json!({ "threats": results })).into_response()
+// }
 
-//-----------------------------------------------------------------------------------Monitoring Preferences
-#[derive(Debug, Serialize, Deserialize)]
-pub struct MonitoringPreferences {
-    #[serde(rename = "_id")]
-    pub id: ObjectId,
-    pub user_id: String,
-    pub enabled: bool,
-    pub interval_seconds: u64,
-    pub alert_types: Vec<String>,
-    #[serde(serialize_with = "serialize_datetime_as_iso_string")]
-    pub updated_at: DateTime,
-}
+// //-----------------------------------------------------------------------------------Monitoring Preferences
+// #[derive(Debug, Serialize, Deserialize)]
+// pub struct MonitoringPreferences {
+//     #[serde(rename = "_id")]
+//     pub id: ObjectId,
+//     pub user_id: String,
+//     pub enabled: bool,
+//     pub interval_seconds: u64,
+//     pub alert_types: Vec<String>,
+//     #[serde(serialize_with = "serialize_datetime_as_iso_string")]
+//     pub updated_at: DateTime,
+// }
 
-#[derive(Debug, Deserialize)]
-pub struct UpdateMonitoringPreferencesRequest {
-    pub enabled: Option<bool>,
-    pub interval_seconds: Option<u64>,
-    pub alert_types: Option<Vec<String>>,
-}
+// #[derive(Debug, Deserialize)]
+// pub struct UpdateMonitoringPreferencesRequest {
+//     pub enabled: Option<bool>,
+//     pub interval_seconds: Option<u64>,
+//     pub alert_types: Option<Vec<String>>,
+// }
 
-#[derive(Debug, Serialize)]
-pub struct MonitoringPreferencesResponse {
-    pub id: String,
-    pub enabled: bool,
-    pub interval_seconds: u64,
-    pub alert_types: Vec<String>,
-    #[serde(serialize_with = "serialize_datetime_as_iso_string")]
-    pub updated_at: DateTime,
-}
+// #[derive(Debug, Serialize)]
+// pub struct MonitoringPreferencesResponse {
+//     pub id: String,
+//     pub enabled: bool,
+//     pub interval_seconds: u64,
+//     pub alert_types: Vec<String>,
+//     #[serde(serialize_with = "serialize_datetime_as_iso_string")]
+//     pub updated_at: DateTime,
+// }
 
-async fn get_monitoring_preferences(user: AuthUser) -> impl IntoResponse {
-    let db = get_collection().await.expect("DB connection");
-    let coll: Collection<Document> = db.collection("MonitoringPreferences");
+// async fn get_monitoring_preferences(user: AuthUser) -> impl IntoResponse {
+//     let db = get_collection().await.expect("DB connection");
+//     let coll: Collection<Document> = db.collection("MonitoringPreferences");
     
-    let filter = doc! { "user_id": &user.user_id };
+//     let filter = doc! { "user_id": &user.user_id };
     
-    match coll.find_one(filter).await {
-        Ok(Some(doc)) => {
-            if let (Some(id), Some(enabled), Some(interval_seconds), Some(alert_types), Some(updated_at)) = (
-                doc.get("_id").and_then(|v| v.as_object_id()),
-                doc.get("enabled").and_then(|v| v.as_bool()),
-                doc.get("interval_seconds").and_then(|v| v.as_i64()),
-                doc.get("alert_types").and_then(|v| v.as_array()),
-                doc.get("updated_at").and_then(|v| v.as_datetime()),
-            ) {
-                let alert_types_vec: Vec<String> = alert_types
-                    .iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect();
+//     match coll.find_one(filter).await {
+//         Ok(Some(doc)) => {
+//             if let (Some(id), Some(enabled), Some(interval_seconds), Some(alert_types), Some(updated_at)) = (
+//                 doc.get("_id").and_then(|v| v.as_object_id()),
+//                 doc.get("enabled").and_then(|v| v.as_bool()),
+//                 doc.get("interval_seconds").and_then(|v| v.as_i64()),
+//                 doc.get("alert_types").and_then(|v| v.as_array()),
+//                 doc.get("updated_at").and_then(|v| v.as_datetime()),
+//             ) {
+//                 let alert_types_vec: Vec<String> = alert_types
+//                     .iter()
+//                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
+//                     .collect();
                 
-                Json(serde_json::json!({
-                    "id": id.to_hex(),
-                    "enabled": enabled,
-                    "interval_seconds": interval_seconds as u64,
-                    "alert_types": alert_types_vec,
-                    "updated_at": updated_at.try_to_rfc3339_string().unwrap_or_default(),
-                }))
-                    .into_response()
-            } else {
-                // Return defaults if document exists but fields are missing
-                Json(serde_json::json!({
-                    "id": "",
-                    "enabled": false,
-                    "interval_seconds": 10,
-                    "alert_types": Vec::<String>::new(),
-                    "updated_at": DateTime::now().try_to_rfc3339_string().unwrap_or_default(),
-                }))
-                    .into_response()
-            }
-        }
-        Ok(None) => {
-            // Return defaults if no preferences exist
-            Json(serde_json::json!({
-                "id": "",
-                "enabled": false,
-                "interval_seconds": 10,
-                "alert_types": Vec::<String>::new(),
-                "updated_at": DateTime::now().try_to_rfc3339_string().unwrap_or_default(),
-            }))
-                .into_response()
-        }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": e.to_string()})),
-        )
-            .into_response(),
-    }
-}
+//                 Json(serde_json::json!({
+//                     "id": id.to_hex(),
+//                     "enabled": enabled,
+//                     "interval_seconds": interval_seconds as u64,
+//                     "alert_types": alert_types_vec,
+//                     "updated_at": updated_at.try_to_rfc3339_string().unwrap_or_default(),
+//                 }))
+//                     .into_response()
+//             } else {
+//                 // Return defaults if document exists but fields are missing
+//                 Json(serde_json::json!({
+//                     "id": "",
+//                     "enabled": false,
+//                     "interval_seconds": 10,
+//                     "alert_types": Vec::<String>::new(),
+//                     "updated_at": DateTime::now().try_to_rfc3339_string().unwrap_or_default(),
+//                 }))
+//                     .into_response()
+//             }
+//         }
+//         Ok(None) => {
+//             // Return defaults if no preferences exist
+//             Json(serde_json::json!({
+//                 "id": "",
+//                 "enabled": false,
+//                 "interval_seconds": 10,
+//                 "alert_types": Vec::<String>::new(),
+//                 "updated_at": DateTime::now().try_to_rfc3339_string().unwrap_or_default(),
+//             }))
+//                 .into_response()
+//         }
+//         Err(e) => (
+//             StatusCode::INTERNAL_SERVER_ERROR,
+//             Json(json!({"error": e.to_string()})),
+//         )
+//             .into_response(),
+//     }
+// }
 
-async fn update_monitoring_preferences(
-    user: AuthUser,
-    Json(payload): JsonExtract<UpdateMonitoringPreferencesRequest>,
-) -> impl IntoResponse {
-    let db = get_collection().await.expect("DB connection");
-    let coll: Collection<Document> = db.collection("MonitoringPreferences");
+// async fn update_monitoring_preferences(
+//     user: AuthUser,
+//     Json(payload): JsonExtract<UpdateMonitoringPreferencesRequest>,
+// ) -> impl IntoResponse {
+//     let db = get_collection().await.expect("DB connection");
+//     let coll: Collection<Document> = db.collection("MonitoringPreferences");
     
-    let filter = doc! { "user_id": &user.user_id };
+//     let filter = doc! { "user_id": &user.user_id };
     
-    let mut update_doc = doc! {};
+//     let mut update_doc = doc! {};
     
-    if let Some(ref enabled) = payload.enabled {
-        update_doc.insert("enabled", enabled);
-    }
-    if let Some(ref interval_seconds) = payload.interval_seconds {
-        update_doc.insert("interval_seconds", *interval_seconds as i64);
-    }
-    if let Some(ref alert_types) = payload.alert_types {
-        update_doc.insert("alert_types", alert_types);
-    }
+//     if let Some(ref enabled) = payload.enabled {
+//         update_doc.insert("enabled", enabled);
+//     }
+//     if let Some(ref interval_seconds) = payload.interval_seconds {
+//         update_doc.insert("interval_seconds", *interval_seconds as i64);
+//     }
+//     if let Some(ref alert_types) = payload.alert_types {
+//         update_doc.insert("alert_types", alert_types);
+//     }
     
-    update_doc.insert("updated_at", DateTime::now());
+//     update_doc.insert("updated_at", DateTime::now());
     
-    // Check if preferences exist
-    let existing = coll.find_one(filter.clone()).await.ok().flatten();
+//     // Check if preferences exist
+//     let existing = coll.find_one(filter.clone()).await.ok().flatten();
     
-    if existing.is_some() {
-        // Update existing
-        let update = doc! { "$set": update_doc };
-        match coll.update_one(filter, update).await {
-            Ok(_) => (
-                StatusCode::OK,
-                Json(serde_json::json!({"status": "preferences_updated"})),
-            )
-                .into_response(),
-            Err(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": e.to_string()})),
-            )
-                .into_response(),
-        }
-    } else {
-        // Insert new
-        update_doc.insert("user_id", &user.user_id);
-        update_doc.insert("enabled", payload.enabled.unwrap_or(false));
-        update_doc.insert("interval_seconds", payload.interval_seconds.unwrap_or(10) as i64);
-        update_doc.insert("alert_types", payload.alert_types.unwrap_or_default());
+//     if existing.is_some() {
+//         // Update existing
+//         let update = doc! { "$set": update_doc };
+//         match coll.update_one(filter, update).await {
+//             Ok(_) => (
+//                 StatusCode::OK,
+//                 Json(serde_json::json!({"status": "preferences_updated"})),
+//             )
+//                 .into_response(),
+//             Err(e) => (
+//                 StatusCode::INTERNAL_SERVER_ERROR,
+//                 Json(serde_json::json!({"error": e.to_string()})),
+//             )
+//                 .into_response(),
+//         }
+//     } else {
+//         // Insert new
+//         update_doc.insert("user_id", &user.user_id);
+//         update_doc.insert("enabled", payload.enabled.unwrap_or(false));
+//         update_doc.insert("interval_seconds", payload.interval_seconds.unwrap_or(10) as i64);
+//         update_doc.insert("alert_types", payload.alert_types.unwrap_or_default());
         
-        match coll.insert_one(update_doc).await {
-            Ok(_) => (
-                StatusCode::CREATED,
-                Json(serde_json::json!({"status": "preferences_created"})),
-            )
-                .into_response(),
-            Err(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": e.to_string()})),
-            )
-                .into_response(),
-        }
-    }
-}
+//         match coll.insert_one(update_doc).await {
+//             Ok(_) => (
+//                 StatusCode::CREATED,
+//                 Json(serde_json::json!({"status": "preferences_created"})),
+//             )
+//                 .into_response(),
+//             Err(e) => (
+//                 StatusCode::INTERNAL_SERVER_ERROR,
+//                 Json(serde_json::json!({"error": e.to_string()})),
+//             )
+//                 .into_response(),
+//         }
+//     }
+// }
 
 //-----------------------------------------------------------------------------------Analytics
 #[derive(Debug, Serialize)]
@@ -2106,8 +2106,7 @@ pub struct UserProfile {
     pub profiling_preference: String, // "speed", "security", "balanced"
     pub speed_network_preference: String, // "high", "medium", "low"
     pub confidence_level: String, // "high", "medium", "low"
-    pub profile_type: String, // "personal", "work", "public"
-    pub network_preference: String, // "more_speed_less_security", "balanced", "more_security_less_speed"
+    pub profile_type: String, // "personal", "work"
     pub preferred_authentication: Vec<String>, // e.g., ["WPA3", "WPA2"]
     pub min_signal_strength: Option<i32>, // minimum signal strength percentage
     pub max_risk_level: Option<String>, // "L", "M", "H", "C"
@@ -2120,7 +2119,6 @@ pub struct UserProfileResponse {
     pub speed_network_preference: String,
     pub confidence_level: String,
     pub profile_type: String,
-    pub network_preference: String,
     pub preferred_authentication: Vec<String>,
     pub min_signal_strength: Option<i32>,
     pub max_risk_level: Option<String>,
@@ -2132,7 +2130,6 @@ pub struct UpdateProfileRequest {
     pub speed_network_preference: Option<String>,
     pub confidence_level: Option<String>,
     pub profile_type: Option<String>,
-    pub network_preference: Option<String>,
     pub preferred_authentication: Option<Vec<String>>,
     pub min_signal_strength: Option<i32>,
     pub max_risk_level: Option<String>,
@@ -2707,7 +2704,6 @@ async fn get_user_profile(user: AuthUser) -> impl IntoResponse {
                 speed_network_preference: profile.speed_network_preference,
                 confidence_level: profile.confidence_level,
                 profile_type: profile.profile_type,
-                network_preference: profile.network_preference,
                 preferred_authentication: profile.preferred_authentication,
                 min_signal_strength: profile.min_signal_strength,
                 max_risk_level: profile.max_risk_level,
@@ -2722,7 +2718,6 @@ async fn get_user_profile(user: AuthUser) -> impl IntoResponse {
                 speed_network_preference: "medium".to_string(),
                 confidence_level: "medium".to_string(),
                 profile_type: "personal".to_string(),
-                network_preference: "balanced".to_string(),
                 preferred_authentication: vec!["WPA3".to_string(), "WPA2".to_string()],
                 min_signal_strength: Some(50),
                 max_risk_level: Some("M".to_string()),
@@ -2733,7 +2728,6 @@ async fn get_user_profile(user: AuthUser) -> impl IntoResponse {
                 "speed_network_preference": &default_profile.speed_network_preference,
                 "confidence_level": &default_profile.confidence_level,
                 "profile_type": &default_profile.profile_type,
-                "network_preference": &default_profile.network_preference,
                 "preferred_authentication": &default_profile.preferred_authentication,
                 "min_signal_strength": &default_profile.min_signal_strength,
                 "max_risk_level": &default_profile.max_risk_level,
@@ -2745,7 +2739,6 @@ async fn get_user_profile(user: AuthUser) -> impl IntoResponse {
                 speed_network_preference: default_profile.speed_network_preference,
                 confidence_level: default_profile.confidence_level,
                 profile_type: default_profile.profile_type,
-                network_preference: default_profile.network_preference,
                 preferred_authentication: default_profile.preferred_authentication,
                 min_signal_strength: default_profile.min_signal_strength,
                 max_risk_level: default_profile.max_risk_level,
@@ -2779,9 +2772,6 @@ async fn update_user_profile(
     if let Some(ref val) = payload.profile_type {
         update_doc.insert("profile_type", val);
     }
-    if let Some(ref val) = payload.network_preference {
-        update_doc.insert("network_preference", val);
-    }
     if let Some(ref val) = payload.preferred_authentication {
         update_doc.insert("preferred_authentication", val);
     }
@@ -2814,7 +2804,6 @@ async fn update_user_profile(
                 "speed_network_preference": payload.speed_network_preference.unwrap_or_else(|| "medium".to_string()),
                 "confidence_level": payload.confidence_level.unwrap_or_else(|| "medium".to_string()),
                 "profile_type": payload.profile_type.unwrap_or_else(|| "personal".to_string()),
-                "network_preference": payload.network_preference.unwrap_or_else(|| "balanced".to_string()),
                 "preferred_authentication": payload.preferred_authentication.unwrap_or_else(|| vec!["WPA3".to_string(), "WPA2".to_string()]),
                 "min_signal_strength": payload.min_signal_strength.unwrap_or(50),
                 "max_risk_level": payload.max_risk_level.unwrap_or_else(|| "M".to_string()),
@@ -2970,9 +2959,9 @@ async fn main() {
         .route("/profile/username", post(change_username_handler))
         .route("/profile/password", post(change_password_handler))
         .route("/analytics", get(get_analytics))
-        .route("/threats/alert", post(add_threat_alert))
-        .route("/threats", get(get_threats))
-        .route("/monitoring/preferences", get(get_monitoring_preferences).post(update_monitoring_preferences))
+        // .route("/threats/alert", post(add_threat_alert))
+        // .route("/threats", get(get_threats))
+        // .route("/monitoring/preferences", get(get_monitoring_preferences).post(update_monitoring_preferences))
         .layer(cors);
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     let listener = TcpListener::bind(addr).await.unwrap();
