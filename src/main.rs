@@ -2051,6 +2051,170 @@ pub struct User {
 pub struct Claims {
     pub sub: String, // user_id
     pub exp: usize,  // expiration timestamp
+    pub username: Option<String>, // optional username
+}
+
+//-------------------------------------------------------------------------- Refresh Tokens
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RefreshToken {
+    #[serde(rename = "_id")]
+    pub id: ObjectId,
+    pub user_id: String,
+    pub token_hash: String, // Hashed refresh token (never store plaintext)
+    pub expires_at: DateTime,
+    pub created_at: DateTime,
+    pub revoked: bool,
+    pub device_info: Option<String>,
+}
+
+// Helper function to hash refresh tokens using bcrypt
+fn hash_refresh_token(token: &str) -> String {
+    hash(token, 10).expect("Failed to hash refresh token")
+}
+
+// Helper function to verify a refresh token hash
+fn verify_refresh_token_hash(token: &str, hash: &str) -> bool {
+    verify(token, hash).unwrap_or(false)
+}
+
+// Store refresh token in database
+async fn store_refresh_token(
+    db: &Database,
+    user_id: &str,
+    token: &str,
+) -> Result<(), mongodb::error::Error> {
+    let tokens_collection: Collection<Document> = db.collection("RefreshTokens");
+    
+    // Hash the token before storing
+    let token_hash = hash_refresh_token(token);
+    
+    // Calculate expiration (30 days from now)
+    let expires_at = Utc::now()
+        .checked_add_signed(Duration::days(30))
+        .expect("valid timestamp");
+    
+    let token_doc = doc! {
+        "user_id": user_id,
+        "token_hash": token_hash,
+        "expires_at": DateTime::from_millis(expires_at.timestamp_millis()),
+        "created_at": DateTime::now(),
+        "revoked": false,
+        "device_info": None::<String>,
+    };
+    
+    tokens_collection.insert_one(token_doc).await?;
+    Ok(())
+}
+
+// Verify refresh token exists in database and is not revoked
+async fn verify_refresh_token_in_db(
+    db: &Database,
+    user_id: &str,
+    token: &str,
+) -> Result<bool, mongodb::error::Error> {
+    let tokens_collection: Collection<Document> = db.collection("RefreshTokens");
+    
+    // Find all refresh tokens for this user
+    let filter = doc! {
+        "user_id": user_id,
+        "revoked": false,
+        "expires_at": { "$gt": DateTime::now() }, // Not expired
+    };
+    
+    let mut cursor = tokens_collection.find(filter).await?;
+    
+    // Check each token hash to find a match
+    while let Some(doc) = cursor.try_next().await? {
+        if let Some(token_hash) = doc.get("token_hash").and_then(|v| v.as_str()) {
+            if verify_refresh_token_hash(token, token_hash) {
+                return Ok(true);
+            }
+        }
+    }
+    
+    Ok(false)
+}
+
+// Revoke a specific refresh token
+async fn revoke_refresh_token(
+    db: &Database,
+    user_id: &str,
+    token: &str,
+) -> Result<bool, mongodb::error::Error> {
+    let tokens_collection: Collection<Document> = db.collection("RefreshTokens");
+    
+    // Find and revoke the token
+    let filter = doc! {
+        "user_id": user_id,
+        "revoked": false,
+    };
+    
+    let mut cursor = tokens_collection.find(filter).await?;
+    
+    while let Some(doc) = cursor.try_next().await? {
+        if let Some(token_hash) = doc.get("token_hash").and_then(|v| v.as_str()) {
+            if verify_refresh_token_hash(token, token_hash) {
+                if let Some(id) = doc.get("_id").and_then(|v| v.as_object_id()) {
+                    let update = doc! {
+                        "$set": {
+                            "revoked": true,
+                        }
+                    };
+                    tokens_collection.update_one(doc! { "_id": id }, update).await?;
+                    return Ok(true);
+                }
+            }
+        }
+    }
+    
+    Ok(false)
+}
+
+// Revoke all refresh tokens for a user
+async fn revoke_all_refresh_tokens_for_user(
+    db: &Database,
+    user_id: &str,
+) -> Result<u64, mongodb::error::Error> {
+    let tokens_collection: Collection<Document> = db.collection("RefreshTokens");
+    
+    let filter = doc! {
+        "user_id": user_id,
+        "revoked": false,
+    };
+    
+    let update = doc! {
+        "$set": {
+            "revoked": true,
+        }
+    };
+    
+    let result = tokens_collection.update_many(filter, update).await?;
+    Ok(result.modified_count)
+}
+
+// Revoke old refresh token when rotating (for refresh endpoint)
+#[allow(dead_code)] // May be useful for direct hash-based revocation in future
+async fn revoke_refresh_token_by_hash(
+    db: &Database,
+    user_id: &str,
+    token_hash: &str,
+) -> Result<(), mongodb::error::Error> {
+    let tokens_collection: Collection<Document> = db.collection("RefreshTokens");
+    
+    let filter = doc! {
+        "user_id": user_id,
+        "token_hash": token_hash,
+        "revoked": false,
+    };
+    
+    let update = doc! {
+        "$set": {
+            "revoked": true,
+        }
+    };
+    
+    tokens_collection.update_one(filter, update).await?;
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -2063,6 +2227,7 @@ pub struct LoginRequest {
 #[derive(Debug, Serialize)]
 pub struct LoginResponse {
     pub token: String,
+    pub refresh_token: String,
     pub user_id: String,
     pub username: Option<String>,
 }
@@ -2266,7 +2431,7 @@ where
         })
     }
 }
-pub fn create_jwt(user_id: &str) -> String {
+pub fn create_jwt(user_id: &str, username: Option<&String>) -> String {
     let secret = env::var("JWT_SECRET").expect("JWT_SECRET not set");
     let expiration = Utc::now()
         .checked_add_signed(Duration::hours(24))
@@ -2275,6 +2440,7 @@ pub fn create_jwt(user_id: &str) -> String {
     let claims = Claims {
         sub: user_id.to_string(),
         exp: expiration as usize,
+        username: username.cloned(),
     };
     encode(
         &Header::default(),
@@ -2282,6 +2448,25 @@ pub fn create_jwt(user_id: &str) -> String {
         &EncodingKey::from_secret(secret.as_ref()),
     )
     .expect("Failed to create token")
+}
+
+pub fn create_refresh_token(user_id: &str, username: Option<&String>) -> String {
+    let secret = env::var("JWT_SECRET").expect("JWT_SECRET not set");
+    let expiration = Utc::now()
+        .checked_add_signed(Duration::days(30))
+        .expect("valid timestamp")
+        .timestamp();
+    let claims = Claims {
+        sub: user_id.to_string(),
+        exp: expiration as usize,
+        username: username.cloned(),
+    };
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_ref()),
+    )
+    .expect("Failed to create refresh token")
 }
 pub fn verify_jwt(token: &str) -> JWTResult<TokenData<Claims>> {
     let secret = env::var("JWT_SECRET").expect("JWT_SECRET not set");
@@ -2351,17 +2536,183 @@ async fn login_handler(Json(payload): Json<LoginRequest>) -> impl IntoResponse {
             .into_response();
     }
 
-    let token = create_jwt(&user.id.to_hex());
+    let token = create_jwt(&user.id.to_hex(), user.username.as_ref());
+    let refresh_token = create_refresh_token(&user.id.to_hex(), user.username.as_ref());
+    
+    // Store refresh token in database
+    if let Err(e) = store_refresh_token(&db, &user.id.to_hex(), &refresh_token).await {
+        eprintln!("Failed to store refresh token: {:?}", e);
+        // Continue anyway - token is still valid, just not tracked in DB
+    }
 
     (
         StatusCode::OK,
         Json(LoginResponse {
             token,
+            refresh_token,
             user_id: user.id.to_hex(),
             username: user.username.clone(),
         }),
     )
         .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RefreshTokenRequest {
+    pub refresh_token: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RefreshTokenResponse {
+    pub token: String,
+    pub refresh_token: String,
+}
+
+async fn refresh_token_handler(Json(payload): Json<RefreshTokenRequest>) -> impl IntoResponse {
+    // Verify the refresh token signature first
+    let token_data = match verify_jwt(&payload.refresh_token) {
+        Ok(data) => data,
+        Err(_) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "Invalid refresh token"})),
+            )
+                .into_response();
+        }
+    };
+
+    let user_id = token_data.claims.sub.clone();
+    let username = token_data.claims.username.clone();
+
+    // Check database connection
+    let db = match get_collection().await {
+        Ok(db) => db,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Database connection failed"})),
+            )
+                .into_response();
+        }
+    };
+
+    // Verify refresh token exists in database and is not revoked
+    match verify_refresh_token_in_db(&db, &user_id, &payload.refresh_token).await {
+        Ok(is_valid) if !is_valid => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "Refresh token revoked or not found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            eprintln!("Failed to verify refresh token in DB: {:?}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Failed to verify refresh token"})),
+            )
+                .into_response();
+        }
+        _ => {} // Token is valid
+    }
+
+    // Find and revoke the old refresh token
+    if let Err(e) = revoke_refresh_token(&db, &user_id, &payload.refresh_token).await {
+        eprintln!("Failed to revoke old refresh token: {:?}", e);
+        // Continue anyway - old token will expire naturally
+    }
+
+    // Generate new access and refresh tokens
+    let new_token = create_jwt(&user_id, username.as_ref());
+    let new_refresh_token = create_refresh_token(&user_id, username.as_ref());
+
+    // Store new refresh token in database
+    if let Err(e) = store_refresh_token(&db, &user_id, &new_refresh_token).await {
+        eprintln!("Failed to store new refresh token: {:?}", e);
+        // Continue anyway - token is still valid, just not tracked in DB
+    }
+
+    (
+        StatusCode::OK,
+        Json(RefreshTokenResponse {
+            token: new_token,
+            refresh_token: new_refresh_token,
+        }),
+    )
+        .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LogoutRequest {
+    pub refresh_token: Option<String>, // Optional: if provided, revoke specific token; otherwise revoke all
+}
+
+// Logout handler - revokes refresh token(s)
+async fn logout_handler(
+    user: AuthUser,
+    Json(payload): Json<LogoutRequest>,
+) -> impl IntoResponse {
+    let db = match get_collection().await {
+        Ok(db) => db,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Database connection failed"})),
+            )
+                .into_response();
+        }
+    };
+
+    // If refresh_token is provided, revoke only that specific token
+    // Otherwise, revoke all refresh tokens for the user
+    if let Some(refresh_token) = payload.refresh_token {
+        match revoke_refresh_token(&db, &user.user_id, &refresh_token).await {
+            Ok(revoked) if revoked => {
+                (
+                    StatusCode::OK,
+                    Json(json!({"status": "logged_out", "message": "Refresh token revoked"})),
+                )
+                    .into_response()
+            }
+            Ok(_) => {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({"error": "Refresh token not found"})),
+                )
+                    .into_response()
+            }
+            Err(e) => {
+                eprintln!("Failed to revoke refresh token: {:?}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "Failed to revoke refresh token"})),
+                )
+                    .into_response()
+            }
+        }
+    } else {
+        // Revoke all refresh tokens for the user
+        match revoke_all_refresh_tokens_for_user(&db, &user.user_id).await {
+            Ok(count) => {
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "status": "logged_out",
+                        "message": format!("Revoked {} refresh token(s)", count)
+                    })),
+                )
+                    .into_response()
+            }
+            Err(e) => {
+                eprintln!("Failed to revoke refresh tokens: {:?}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "Failed to revoke refresh tokens"})),
+                )
+                    .into_response()
+            }
+        }
+    }
 }
 
 async fn register_handler(
@@ -2533,13 +2884,21 @@ async fn verify_email_handler(Json(payload): Json<VerifyRequest>) -> impl IntoRe
         .await
         .unwrap();
 
-    let token = create_jwt(&user.id.to_hex());
+    let token = create_jwt(&user.id.to_hex(), user.username.as_ref());
+    let refresh_token = create_refresh_token(&user.id.to_hex(), user.username.as_ref());
+    
+    // Store refresh token in database
+    if let Err(e) = store_refresh_token(&db, &user.id.to_hex(), &refresh_token).await {
+        eprintln!("Failed to store refresh token: {:?}", e);
+        // Continue anyway - token is still valid, just not tracked in DB
+    }
 
     (
         StatusCode::OK,
         Json(json!({
             "verified": true,
             "token": token,
+            "refresh_token": refresh_token,
             "user_id": user.id.to_hex(),
             "username": user.username,
         })),
@@ -2921,6 +3280,17 @@ async fn change_password_handler(
         doc! { "$set": { "password_hash": &password_hash } }
     ).await {
         Ok(result) if result.matched_count > 0 => {
+            // Revoke all refresh tokens for security (user should re-authenticate)
+            match revoke_all_refresh_tokens_for_user(&db, &user.user_id).await {
+                Ok(count) => {
+                    eprintln!("Password changed: Revoked {} refresh token(s) for user {}", count, user.user_id);
+                }
+                Err(e) => {
+                    eprintln!("Failed to revoke refresh tokens after password change: {:?}", e);
+                    // Continue anyway - password was changed successfully
+                }
+            }
+            
             (StatusCode::OK, Json(json!({"status": "password_updated"}))).into_response()
         }
         Ok(_) => (
@@ -2941,6 +3311,8 @@ async fn main() {
     let cors = CorsLayer::very_permissive();
     let app = Router::new()
         .route("/auth/login", post(login_handler))
+        .route("/auth/refresh", post(refresh_token_handler))
+        .route("/auth/logout", post(logout_handler))
         .route("/auth/register", post(register_handler))
         .route("/auth/verify", post(verify_email_handler))
         .route(
