@@ -273,12 +273,16 @@ pub async fn register_handler(
             .await
             .unwrap();
 
-        send_email(
+        if let Err(e) = send_email(
             &payload.email,
             "Your verification code",
             &format!("Code: {}", verification_code),
         )
-        .await;
+        .await
+        {
+            eprintln!("[CRITICAL] Failed to send verification email to {}: {}", payload.email, e);
+            // Continue anyway - user is already updated in DB
+        }
 
         return success_response(
             StatusCode::OK,
@@ -305,16 +309,21 @@ pub async fn register_handler(
         is_verified: false,
         verification_code: Some(verification_code.clone()),
         reset_code: None,
+        reset_code_expires_at: None,
     };
 
     users.insert_one(&new_user).await.unwrap();
 
-    send_email(
+    if let Err(e) = send_email(
         &payload.email,
         "Your verification code",
         &format!("Code: {}", verification_code),
     )
-    .await;
+    .await
+    {
+        eprintln!("[CRITICAL] Failed to send verification email to {}: {}", payload.email, e);
+        // Continue anyway - user is already created in DB
+    }
 
     success_response(
         StatusCode::OK,
@@ -418,12 +427,16 @@ pub async fn resend_verification_handler(
         .await
         .unwrap();
 
-    send_email(
+    if let Err(e) = send_email(
         &user.email,
         "Your verification code",
         &format!("Code: {}", verification_code),
     )
-    .await;
+    .await
+    {
+        eprintln!("[CRITICAL] Failed to send verification email to {}: {}", user.email, e);
+        // Continue anyway - verification code is already updated in DB
+    }
 
     success_response(
         StatusCode::OK,
@@ -465,12 +478,16 @@ pub async fn reset_password_request_handler(
         .await
         .unwrap();
 
-    send_email(
+    if let Err(e) = send_email(
         &user.email,
         "Reset your password",
         &format!("Reset code: {}", reset_code),
     )
-    .await;
+    .await
+    {
+        eprintln!("[CRITICAL] Failed to send reset code email to {}: {}", user.email, e);
+        // Continue anyway - reset code is already updated in DB
+    }
 
     success_response(
         StatusCode::OK,

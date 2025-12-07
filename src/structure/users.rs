@@ -1,4 +1,4 @@
-use mongodb::bson::oid::ObjectId;
+use mongodb::bson::{oid::ObjectId, DateTime};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -11,6 +11,7 @@ pub struct User {
     pub is_verified: bool,
     pub verification_code: Option<String>,
     pub reset_code: Option<String>,
+    pub reset_code_expires_at: Option<DateTime>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

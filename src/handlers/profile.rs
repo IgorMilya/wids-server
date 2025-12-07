@@ -11,7 +11,7 @@ use crate::{
     middleware::auth::AuthUser,
     structure::profile::{UpdateProfileRequest, UserProfile, UserProfileResponse},
     structure::users::{ChangePasswordRequest, ChangeUsernameRequest, User},
-    utils::{error_response, password, success_response},
+    utils::{error_response, jwt, password, success_response},
 };
 
 pub async fn get_user_profile(user: AuthUser) -> impl IntoResponse {
@@ -174,9 +174,27 @@ pub async fn change_username_handler(
         .await
     {
         Ok(result) if result.matched_count > 0 => {
+            // Generate new tokens with updated username
+            let new_token = jwt::create_jwt(&user.user_id, Some(&payload.username));
+            let new_refresh_token = jwt::create_refresh_token(&user.user_id, Some(&payload.username));
+            
+            // Revoke old refresh token and store new one
+            if let Err(e) = refresh_tokens::revoke_all_refresh_tokens_for_user(&db, &user.user_id).await {
+                eprintln!("Failed to revoke old refresh tokens after username change: {:?}", e);
+            }
+            
+            if let Err(e) = refresh_tokens::store_refresh_token(&db, &user.user_id, &new_refresh_token).await {
+                eprintln!("Failed to store new refresh token after username change: {:?}", e);
+            }
+            
             success_response(
                 StatusCode::OK,
-                serde_json::json!({"status": "username_updated", "username": payload.username}),
+                serde_json::json!({
+                    "status": "username_updated",
+                    "username": payload.username,
+                    "token": new_token,
+                    "refresh_token": new_refresh_token
+                }),
             )
         }
         Ok(_) => error_response(StatusCode::NOT_FOUND, "User not found"),
