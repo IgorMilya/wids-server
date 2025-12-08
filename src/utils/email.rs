@@ -88,7 +88,7 @@ pub async fn send_email(to: &str, subject: &str, body: &str) -> Result<(), Strin
                     
                     // Provide more helpful error messages
                     let detailed_error = if error_msg.contains("Network is unreachable") {
-                        format!("{} - This usually means the hosting provider (Render) is blocking outbound SMTP connections. Consider using Gmail API or a service like SendGrid/Mailgun.", error_msg)
+                        format!("{} - This usually means the hosting provider is blocking outbound SMTP connections.", error_msg)
                     } else if error_msg.contains("Connection refused") {
                         format!("{} - SMTP server refused connection. Check firewall settings and SMTP server address.", error_msg)
                     } else if error_msg.contains("timeout") {
