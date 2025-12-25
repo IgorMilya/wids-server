@@ -1,4 +1,5 @@
-1.75.0
+[toolchain]
+channel = "1.75.0"
 
 
 
