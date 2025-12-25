@@ -61,7 +61,13 @@ async fn main() {
         
         .layer(cors);
     
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    // Use PORT from environment variable (Heroku requirement) or default to 3000 for local development
+    let port = std::env::var("PORT")
+        .unwrap_or_else(|_| "3000".to_string())
+        .parse::<u16>()
+        .expect("PORT must be a valid number");
+    
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = TcpListener::bind(addr).await.unwrap();
     println!("Listening on http://{}", addr);
     

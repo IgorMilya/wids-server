@@ -26,7 +26,6 @@ struct RecaptchaResponse {
     error_codes: Option<Vec<String>>,
 }
 
-/// Verify reCAPTCHA token
 pub async fn ensure_recaptcha(token: &str) -> Result<(), Response> {
     let secret = EnvVars::recaptcha_secret().map_err(|_| {
         crate::utils::error_response(

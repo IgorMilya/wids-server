@@ -7,7 +7,6 @@ use crate::config::Constants;
 
 static REGISTRATION_ATTEMPTS: Lazy<DashMap<String, Vec<SystemTime>>> = Lazy::new(DashMap::new);
 
-/// Check if registration attempts exceed rate limit
 pub fn check_registration_rate_limit(addr: &SocketAddr) -> Result<(), String> {
     let ip = addr.ip().to_string();
     let now = SystemTime::now();
