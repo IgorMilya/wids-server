@@ -14,17 +14,13 @@ impl EnvVars {
         env::var("JWT_SECRET").expect("JWT_SECRET not set")
     }
 
-    pub fn smtp_user() -> String {
-        env::var("SMTP_USER").expect("SMTP_USER not set")
+    pub fn resend_api_key() -> String {
+        env::var("RESEND_API_KEY").expect("RESEND_API_KEY not set")
     }
 
-    pub fn smtp_pass() -> String {
-        env::var("SMTP_PASS").expect("SMTP_PASS not set")
-    }
-
-    pub fn smtp_from() -> String {
-        env::var("SMTP_FROM")
-            .unwrap_or_else(|_| Self::smtp_user())
+    pub fn resend_from_email() -> String {
+        env::var("RESEND_FROM_EMAIL")
+            .unwrap_or_else(|_| "noreply@wids.live".to_string())
     }
 
     pub fn recaptcha_secret() -> Result<String, String> {
@@ -46,13 +42,13 @@ impl Constants {
     /// Database name
     pub const DB_NAME: &'static str = "WISP-APP";
     
-    /// SMTP server
-    pub const SMTP_SERVER: &'static str = "smtp.gmail.com";
-    
     /// reCAPTCHA API endpoint
     pub const RECAPTCHA_VERIFY_URL: &'static str = "https://www.google.com/recaptcha/api/siteverify";
     
     /// Email sender name
-    pub const EMAIL_SENDER_NAME: &'static str = "wids";
+    pub const EMAIL_SENDER_NAME: &'static str = "WIDS";
+    
+    /// Verified Resend domain
+    pub const RESEND_DOMAIN: &'static str = "wids.live";
 }
 

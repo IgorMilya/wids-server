@@ -61,7 +61,7 @@ async fn main() {
         
         .layer(cors);
     
-    // Use PORT from environment variable (Heroku requirement) or default to 3000 for local development
+    // Use PORT from environment variable (Render/cloud platforms) or default to 3000 for local development
     let port = std::env::var("PORT")
         .unwrap_or_else(|_| "3000".to_string())
         .parse::<u16>()

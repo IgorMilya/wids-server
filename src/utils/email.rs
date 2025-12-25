@@ -1,123 +1,63 @@
-use lettre::message::Mailbox;
-use lettre::transport::smtp::authentication::Credentials;
-use lettre::{Message, SmtpTransport, Transport};
-use tokio::time::{timeout, Duration};
-
+use resend_rs::types::CreateEmailBaseOptions;
+use resend_rs::Resend;
 use crate::config::{Constants, EnvVars};
 
-
 pub async fn send_email(to: &str, subject: &str, body: &str) -> Result<(), String> {
-    let smtp_user = EnvVars::smtp_user();
-    let smtp_pass = EnvVars::smtp_pass();
-    let smtp_from = EnvVars::smtp_from();
+    let from_email = EnvVars::resend_from_email();
     
     eprintln!("[EMAIL] Attempting to send email to: {}", to);
-    eprintln!("[EMAIL] SMTP_USER: {}", smtp_user);
-    eprintln!("[EMAIL] SMTP_FROM: {}", smtp_from);
-    eprintln!("[EMAIL] SMTP_PASS length: {} chars", smtp_pass.len());
-    eprintln!("[EMAIL] SMTP_SERVER: {}", Constants::SMTP_SERVER);
+    eprintln!("[EMAIL] From: {}", from_email);
+    eprintln!("[EMAIL] Subject: {}", subject);
     
-    let smtp_user_clone = smtp_user.clone();
-    let smtp_pass_clone = smtp_pass.clone();
-    let smtp_from_clone = smtp_from.clone();
-    let to_clone = to.to_string();
-    let subject_clone = subject.to_string();
-    let body_clone = body.to_string();
+    // Use Resend::default() which reads RESEND_API_KEY from environment
+    let client = Resend::default();
     
-    let send_result = timeout(
-        Duration::from_secs(30),
-        tokio::task::spawn_blocking(move || {
-            eprintln!("[EMAIL] Building SMTP transport...");
-            
-            let from_mailbox = format!("{} <{}>", Constants::EMAIL_SENDER_NAME, smtp_from_clone)
-                .parse()
-                .map_err(|e| {
-                    let error_msg = format!("Failed to parse FROM address: {:?}", e);
-                    eprintln!("[EMAIL ERROR] {}", error_msg);
-                    error_msg
-                })?;
-            
-            let to_mailbox = to_clone.parse().map_err(|e| {
-                let error_msg = format!("Failed to parse TO address: {:?}", e);
-                eprintln!("[EMAIL ERROR] {}", error_msg);
-                error_msg
-            })?;
-
-            let email = Message::builder()
-                .from(from_mailbox)
-                .to(Mailbox::new(None, to_mailbox))
-                .subject(subject_clone)
-                .body(body_clone)
-                .map_err(|e| {
-                    let error_msg = format!("Failed to build email message: {:?}", e);
-                    eprintln!("[EMAIL ERROR] {}", error_msg);
-                    error_msg
-                })?;
-            
-            let smtp = match SmtpTransport::starttls_relay(Constants::SMTP_SERVER) {
-                Ok(builder) => builder
-                    .credentials(Credentials::new(
-                        smtp_user_clone,
-                        smtp_pass_clone,
-                    ))
-                    .build(),
-                Err(e) => {
-                    let error_msg = format!("Failed to create SMTP relay: {:?}", e);
-                    eprintln!("[EMAIL ERROR] {}", error_msg);
-                    return Err(error_msg);
-                }
-            };
-            
-            eprintln!("[EMAIL] Attempting to connect to SMTP server...");
-            
-            match smtp.send(&email) {
-                Ok(_) => {
-                    eprintln!("[EMAIL SUCCESS] Email accepted by SMTP server");
-                    Ok(())
-                }
-                Err(err) => {
-                    let error_msg = format!("Email send failed: {:?}", err);
-                    eprintln!("[EMAIL ERROR] {}", error_msg);
-                    
-                    let detailed_error = if error_msg.contains("Network is unreachable") {
-                        format!("{} - This usually means the hosting provider is blocking outbound SMTP connections.", error_msg)
-                    } else if error_msg.contains("Connection refused") {
-                        format!("{} - SMTP server refused connection. Check firewall settings and SMTP server address.", error_msg)
-                    } else if error_msg.contains("timeout") {
-                        format!("{} - Connection timed out. SMTP server may be unreachable.", error_msg)
-                    } else {
-                        error_msg
-                    };
-                    
-                    Err(detailed_error)
-                }
-            }
-        })
-    ).await;
+    // Create email message - format body as HTML
+    let from = format!("{} <{}>", Constants::EMAIL_SENDER_NAME, from_email);
+    let to_array = [to]; // Use array slice as per documentation
     
-    match send_result {
-        Ok(Ok(Ok(()))) => {
-            eprintln!("[EMAIL SUCCESS] Email sent successfully to: {}", to);
+    // Convert plain text body to HTML if it's not already HTML
+    let html_body = if body.contains("<html") || body.contains("<div") || body.contains("<p>") {
+        body.to_string()
+    } else {
+        format!(
+            r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .code {{ font-size: 24px; font-weight: bold; color: #007bff; padding: 10px; background: #f0f0f0; border-radius: 5px; text-align: center; margin: 20px 0; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>{}</h2>
+        <div class="code">{}</div>
+        <p>This code will expire after verification.</p>
+    </div>
+</body>
+</html>"#,
+            subject, body
+        )
+    };
+    
+    let email = CreateEmailBaseOptions::new(&from, to_array, subject)
+        .with_html(&html_body);
+    
+    eprintln!("[EMAIL] Sending email via Resend API...");
+    
+    match client.emails.send(email).await {
+        Ok(response) => {
+            eprintln!("[EMAIL SUCCESS] Email sent successfully to: {} (ID: {:?})", to, response.id);
             Ok(())
         }
-        Ok(Ok(Err(e))) => {
-            eprintln!("[EMAIL ERROR] Failed to send email: {}", e);
-            Err(e)
-        }
-        Ok(Err(join_err)) => {
-            let error_msg = if join_err.is_panic() {
-                "Email send task panicked. This may indicate a critical error.".to_string()
-            } else {
-                format!("Email send task failed: {:?}", join_err)
-            };
+        Err(err) => {
+            let error_msg = format!("Email send failed: {:?}", err);
             eprintln!("[EMAIL ERROR] {}", error_msg);
-            Err(error_msg)
-        }
-        Err(_elapsed) => {
-            let error_msg = "Email send timed out after 30 seconds. This may indicate network connectivity issues or that the hosting provider is blocking SMTP connections.".to_string();
-            eprintln!("[EMAIL ERROR] {}", error_msg);
+            eprintln!("[EMAIL ERROR] Full error details: {:#?}", err);
             Err(error_msg)
         }
     }
 }
-
