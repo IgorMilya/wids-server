@@ -72,7 +72,6 @@ pub async fn login_handler(Json(payload): Json<LoginRequest>) -> impl IntoRespon
     let token = jwt::create_jwt(&user.id.to_hex(), user.username.as_ref());
     let refresh_token = jwt::create_refresh_token(&user.id.to_hex(), user.username.as_ref());
 
-    // Store refresh token in database
     if let Err(e) = refresh_tokens::store_refresh_token(&db, &user.id.to_hex(), &refresh_token).await
     {
         eprintln!("Failed to store refresh token: {:?}", e);
@@ -90,7 +89,6 @@ pub async fn login_handler(Json(payload): Json<LoginRequest>) -> impl IntoRespon
 }
 
 pub async fn refresh_token_handler(Json(payload): Json<RefreshTokenRequest>) -> impl IntoResponse {
-    // Verify the refresh token signature first
     let token_data = match jwt::verify_jwt(&payload.refresh_token) {
         Ok(data) => data,
         Err(_) => {
@@ -101,7 +99,6 @@ pub async fn refresh_token_handler(Json(payload): Json<RefreshTokenRequest>) -> 
     let user_id = token_data.claims.sub.clone();
     let username = token_data.claims.username.clone();
 
-    // Check database connection
     let db = match get_database().await {
         Ok(db) => db,
         Err(_) => {
@@ -112,7 +109,6 @@ pub async fn refresh_token_handler(Json(payload): Json<RefreshTokenRequest>) -> 
         }
     };
 
-    // Verify refresh token exists in database and is not revoked
     match refresh_tokens::verify_refresh_token_in_db(&db, &user_id, &payload.refresh_token).await {
         Ok(is_valid) if !is_valid => {
             return error_response(
@@ -127,20 +123,17 @@ pub async fn refresh_token_handler(Json(payload): Json<RefreshTokenRequest>) -> 
                 "Failed to verify refresh token",
             );
         }
-        _ => {} // Token is valid
+        _ => {}
     }
 
-    // Find and revoke the old refresh token
     if let Err(e) = refresh_tokens::revoke_refresh_token(&db, &user_id, &payload.refresh_token).await
     {
         eprintln!("Failed to revoke old refresh token: {:?}", e);
     }
 
-    // Generate new access and refresh tokens
     let new_token = jwt::create_jwt(&user_id, username.as_ref());
     let new_refresh_token = jwt::create_refresh_token(&user_id, username.as_ref());
 
-    // Store new refresh token in database
     if let Err(e) = refresh_tokens::store_refresh_token(&db, &user_id, &new_refresh_token).await {
         eprintln!("Failed to store new refresh token: {:?}", e);
     }
@@ -168,8 +161,6 @@ pub async fn logout_handler(
         }
     };
 
-    // If refresh_token is provided, revoke only that specific token
-    // Otherwise, revoke all refresh tokens for the user
     if let Some(refresh_token) = payload.refresh_token {
         match refresh_tokens::revoke_refresh_token(&db, &user.user_id, &refresh_token).await {
             Ok(revoked) if revoked => {
@@ -193,7 +184,6 @@ pub async fn logout_handler(
             }
         }
     } else {
-        // Revoke all refresh tokens
         match refresh_tokens::revoke_all_refresh_tokens_for_user(&db, &user.user_id).await {
             Ok(count) => {
                 eprintln!("Revoked {} refresh token(s) for user {}", count, user.user_id);
@@ -221,7 +211,6 @@ pub async fn register_handler(
         return err;
     }
 
-    // Check rate limit
     if let Err(msg) = rate_limit::check_registration_rate_limit(&addr) {
         return error_response(StatusCode::TOO_MANY_REQUESTS, &msg);
     }
@@ -281,7 +270,6 @@ pub async fn register_handler(
         .await
         {
             eprintln!("[CRITICAL] Failed to send verification email to {}: {}", payload.email, e);
-            // Continue anyway - user is already updated in DB
         }
 
         return success_response(
@@ -322,7 +310,6 @@ pub async fn register_handler(
     .await
     {
         eprintln!("[CRITICAL] Failed to send verification email to {}: {}", payload.email, e);
-        // Continue anyway - user is already created in DB
     }
 
     success_response(
@@ -371,7 +358,6 @@ pub async fn verify_email_handler(Json(payload): Json<VerifyEmailRequest>) -> im
     let token = jwt::create_jwt(&user.id.to_hex(), user.username.as_ref());
     let refresh_token = jwt::create_refresh_token(&user.id.to_hex(), user.username.as_ref());
 
-    // Store refresh token in database
     if let Err(e) = refresh_tokens::store_refresh_token(&db, &user.id.to_hex(), &refresh_token).await
     {
         eprintln!("Failed to store refresh token: {:?}", e);
@@ -435,7 +421,6 @@ pub async fn resend_verification_handler(
     .await
     {
         eprintln!("[CRITICAL] Failed to send verification email to {}: {}", user.email, e);
-        // Continue anyway - verification code is already updated in DB
     }
 
     success_response(
@@ -486,7 +471,6 @@ pub async fn reset_password_request_handler(
     .await
     {
         eprintln!("[CRITICAL] Failed to send reset code email to {}: {}", user.email, e);
-        // Continue anyway - reset code is already updated in DB
     }
 
     success_response(

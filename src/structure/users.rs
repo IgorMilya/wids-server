@@ -16,9 +16,9 @@ pub struct User {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: String, // user_id
-    pub exp: usize,  // expiration timestamp
-    pub username: Option<String>, // optional username
+    pub sub: String, 
+    pub exp: usize,  
+    pub username: Option<String>, 
 }
 
 #[derive(Debug, Deserialize)]

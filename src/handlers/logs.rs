@@ -68,7 +68,6 @@ pub async fn get_logs(
         }
     }
 
-    // Support date range filtering (date_from and date_till) or single date
     if let Some(date_from_str) = params.get("date_from") {
         if let Ok(parsed_date) = chrono::NaiveDate::parse_from_str(date_from_str, "%Y-%m-%d") {
             let start = Utc.from_utc_datetime(&parsed_date.and_hms_opt(0, 0, 0).unwrap());
@@ -83,7 +82,6 @@ pub async fn get_logs(
         }
     }
 
-    // Support legacy single date parameter
     if let Some(date_str) = params.get("date") {
         if let Ok(parsed_date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
             let start = Utc.from_utc_datetime(&parsed_date.and_hms_opt(0, 0, 0).unwrap());
@@ -95,7 +93,6 @@ pub async fn get_logs(
         }
     }
 
-    // Parse pagination params
     let page: u64 = params.get("page").and_then(|v| v.parse().ok()).unwrap_or(1);
     let limit: u64 = params
         .get("limit")
@@ -103,12 +100,10 @@ pub async fn get_logs(
         .unwrap_or(11);
     let skip: u64 = (page - 1) * limit;
 
-    // Parse sort parameters
     let sort_field = params.get("sort_by").unwrap_or(&"timestamp".to_string()).clone();
     let sort_direction_str = params.get("sort_direction").unwrap_or(&"desc".to_string()).clone();
     let sort_direction = if sort_direction_str == "asc" { 1 } else { -1 };
 
-    // Map frontend column names to backend field names
     let db_sort_field = match sort_field.as_str() {
         "SSID" => "network_ssid",
         "BSSID" => "network_bssid",
@@ -120,10 +115,9 @@ pub async fn get_logs(
         "action" => "action",
         "timestamp" => "timestamp",
         "details" => "details",
-        _ => "timestamp", // Default to timestamp if unknown field
+        _ => "timestamp", 
     };
 
-    // Get total count
     let total = coll
         .count_documents(filter.clone())
         .await
@@ -161,7 +155,6 @@ pub async fn export_logs(
     let coll: Collection<LogEntry> = get_collection(&db, "Logs");
     let mut filter = doc! { "user_id": &user.user_id };
 
-    // Apply same filters as get_logs but without pagination
     if let Some(action) = params.get("action") {
         let action_str = action.trim();
         if !action_str.is_empty() {
@@ -176,7 +169,6 @@ pub async fn export_logs(
         }
     }
 
-    // Support date range filtering
     if let Some(date_from_str) = params.get("date_from") {
         if let Ok(parsed_date) = chrono::NaiveDate::parse_from_str(date_from_str, "%Y-%m-%d") {
             let start = Utc.from_utc_datetime(&parsed_date.and_hms_opt(0, 0, 0).unwrap());
@@ -191,7 +183,6 @@ pub async fn export_logs(
         }
     }
 
-    // Support legacy single date parameter
     if let Some(date_str) = params.get("date") {
         if let Ok(parsed_date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
             let start = Utc.from_utc_datetime(&parsed_date.and_hms_opt(0, 0, 0).unwrap());

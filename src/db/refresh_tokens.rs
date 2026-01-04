@@ -8,17 +8,14 @@ use chrono::{Duration, Utc};
 
 use crate::utils::password;
 
-/// Hash refresh token using bcrypt
 fn hash_refresh_token(token: &str) -> String {
     password::hash_password(token).expect("Failed to hash refresh token")
 }
 
-/// Verify a refresh token hash
 fn verify_refresh_token_hash(token: &str, hash: &str) -> bool {
     password::verify_password(token, hash).unwrap_or(false)
 }
 
-/// Store refresh token in database
 pub async fn store_refresh_token(
     db: &Database,
     user_id: &str,
@@ -26,10 +23,8 @@ pub async fn store_refresh_token(
 ) -> Result<(), mongodb::error::Error> {
     let tokens_collection: Collection<Document> = db.collection("RefreshTokens");
 
-    // Hash the token before storing
     let token_hash = hash_refresh_token(token);
 
-    // Calculate expiration (30 days from now)
     let expires_at = Utc::now()
         .checked_add_signed(Duration::days(30))
         .expect("valid timestamp");
@@ -47,7 +42,6 @@ pub async fn store_refresh_token(
     Ok(())
 }
 
-/// Verify refresh token exists in database and is not revoked
 pub async fn verify_refresh_token_in_db(
     db: &Database,
     user_id: &str,
@@ -55,16 +49,14 @@ pub async fn verify_refresh_token_in_db(
 ) -> Result<bool, mongodb::error::Error> {
     let tokens_collection: Collection<Document> = db.collection("RefreshTokens");
 
-    // Find all refresh tokens for this user
     let filter = doc! {
         "user_id": user_id,
         "revoked": false,
-        "expires_at": { "$gt": DateTime::now() }, // Not expired
+        "expires_at": { "$gt": DateTime::now() }, 
     };
 
     let mut cursor = tokens_collection.find(filter).await?;
 
-    // Check each token hash to find a match
     while let Some(doc) = cursor.try_next().await? {
         if let Some(token_hash) = doc.get("token_hash").and_then(|v| v.as_str()) {
             if verify_refresh_token_hash(token, token_hash) {
@@ -76,7 +68,6 @@ pub async fn verify_refresh_token_in_db(
     Ok(false)
 }
 
-/// Revoke a specific refresh token
 pub async fn revoke_refresh_token(
     db: &Database,
     user_id: &str,
@@ -84,7 +75,6 @@ pub async fn revoke_refresh_token(
 ) -> Result<bool, mongodb::error::Error> {
     let tokens_collection: Collection<Document> = db.collection("RefreshTokens");
 
-    // Find and revoke the token
     let filter = doc! {
         "user_id": user_id,
         "revoked": false,
@@ -111,7 +101,6 @@ pub async fn revoke_refresh_token(
     Ok(false)
 }
 
-/// Revoke all refresh tokens for a user
 pub async fn revoke_all_refresh_tokens_for_user(
     db: &Database,
     user_id: &str,

@@ -5,7 +5,6 @@ use crate::config::{Constants, EnvVars};
 pub mod operations;
 pub mod refresh_tokens;
 
-/// Get MongoDB database connection
 pub async fn get_database() -> mongodb::error::Result<Database> {
     let db_url = EnvVars::mongo_db_url();
     let client = Client::with_uri_str(db_url)
@@ -15,7 +14,6 @@ pub async fn get_database() -> mongodb::error::Result<Database> {
     Ok(db)
 }
 
-/// Get a collection from the database
 pub fn get_collection<T: Send + Sync>(db: &Database, name: &str) -> mongodb::Collection<T> {
     db.collection(name)
 }

@@ -27,7 +27,6 @@ pub async fn get_analytics(
     user: AuthUser,
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
-    // Get date filter parameter (day, week, month, year, all)
     let date_filter = params
         .get("threat_date_filter")
         .map(|s| s.as_str())
@@ -167,7 +166,6 @@ pub async fn get_analytics(
         0.0
     };
 
-    // Calculate days since first log
     let first_log = logs_coll
         .find_one(doc! { "user_id": &user.user_id })
         .sort(doc! { "timestamp": 1 })
@@ -232,7 +230,6 @@ pub async fn get_analytics(
         .await
         .unwrap_or(0) as i64;
 
-    // Time-based filtering
     let today_start = DateTime::from_millis(
         Utc::now().timestamp_millis() - ((Utc::now().timestamp() % (24 * 60 * 60)) * 1000),
     );
@@ -553,7 +550,6 @@ pub async fn get_analytics(
         }
     }
 
-    // Hourly activity (last 7 days)
     let seven_days_ago = DateTime::from_millis(Utc::now().timestamp_millis() - (7 * 24 * 60 * 60 * 1000));
 
     let hourly_pipeline = vec![
@@ -596,7 +592,6 @@ pub async fn get_analytics(
         }
     }
 
-    // Fill missing hours with 0
     for hour in 0..24 {
         if !hourly_activity.iter().any(|h| h.hour == hour) {
             hourly_activity.push(HourlyActivity {
@@ -612,7 +607,6 @@ pub async fn get_analytics(
         Utc::now().timestamp_millis() - (30 * 24 * 60 * 60 * 1000),
     );
 
-    // Threats Over Time - Daily
     let daily_threats_pipeline = vec![
         doc! {
             "$match": doc! {
@@ -661,7 +655,6 @@ pub async fn get_analytics(
         }
     }
 
-    // Threats Over Time - Weekly
     let twelve_weeks_ago = DateTime::from_millis(
         Utc::now().timestamp_millis() - (12 * 7 * 24 * 60 * 60 * 1000),
     );
@@ -714,7 +707,6 @@ pub async fn get_analytics(
         }
     }
 
-    // Threats Over Time - Monthly
     let twelve_months_ago = DateTime::from_millis(
         Utc::now().timestamp_millis() - (12 * 30 * 24 * 60 * 60 * 1000),
     );
@@ -767,7 +759,6 @@ pub async fn get_analytics(
         }
     }
 
-    // Threats Over Time - By Type
     let threat_type_pipeline = vec![
         doc! {
             "$match": doc! {
@@ -875,7 +866,6 @@ pub async fn get_analytics(
         }
     }
 
-    // Threat Type Distribution - with date filtering
     let now = Utc::now();
     let date_filter_start = match date_filter {
         "day" => DateTime::from_millis(now.timestamp_millis() - (24 * 60 * 60 * 1000)),
@@ -981,7 +971,6 @@ pub async fn get_analytics(
         .await
         .unwrap_or(0) as i64;
 
-    // Channel Usage
     let channel_1 = logs_coll
         .count_documents(doc! {
             "user_id": &user.user_id,
@@ -1006,7 +995,6 @@ pub async fn get_analytics(
         .await
         .unwrap_or(0) as i64;
 
-    // 5 GHz channels
     let mut channels_5ghz = Vec::new();
     let common_5ghz = vec![36, 40, 44, 48, 149, 153, 157, 161, 165];
     for channel in common_5ghz {
@@ -1025,7 +1013,6 @@ pub async fn get_analytics(
         }
     }
 
-    // Top Suspicious Networks
     let suspicious_networks_pipeline = vec![
         doc! {
             "$match": doc! {

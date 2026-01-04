@@ -14,7 +14,6 @@ pub mod password;
 pub mod code;
 pub mod rate_limit;
 
-/// Serialize DateTime as ISO string
 pub fn serialize_datetime_as_iso_string<S>(
     date: &DateTime,
     serializer: S,
@@ -29,12 +28,10 @@ where
     )
 }
 
-/// Helper to create error response
 pub fn error_response(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({"error": message}))).into_response()
 }
 
-/// Helper to create success response
 pub fn success_response<T: serde::Serialize>(status: StatusCode, data: T) -> Response {
     (status, Json(data)).into_response()
 }

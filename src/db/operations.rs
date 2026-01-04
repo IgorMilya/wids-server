@@ -11,7 +11,6 @@ use serde_json::json;
 
 use crate::utils::{error_response, success_response};
 
-/// Generic function to delete a document by ID with user_id check
 pub async fn delete_by_id(
     db: &Database,
     collection_name: &str,
@@ -37,7 +36,6 @@ pub async fn delete_by_id(
     }
 }
 
-/// Helper to build date filter for MongoDB queries
 pub fn build_date_filter(
     date_str: Option<&String>,
 ) -> Option<Document> {
@@ -57,8 +55,7 @@ pub fn build_date_filter(
     })
 }
 
-/// Helper to build regex filter for text search
-#[allow(dead_code)] // May be useful for future text search features
+#[allow(dead_code)] 
 pub fn build_regex_filter(field: &str, value: &str) -> Document {
     doc! { field: { "$regex": value, "$options": "i" } }
 }

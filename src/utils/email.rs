@@ -9,14 +9,11 @@ pub async fn send_email(to: &str, subject: &str, body: &str) -> Result<(), Strin
     eprintln!("[EMAIL] From: {}", from_email);
     eprintln!("[EMAIL] Subject: {}", subject);
     
-    // Use Resend::default() which reads RESEND_API_KEY from environment
     let client = Resend::default();
     
-    // Create email message - format body as HTML
     let from = format!("{} <{}>", Constants::EMAIL_SENDER_NAME, from_email);
-    let to_array = [to]; // Use array slice as per documentation
+    let to_array = [to]; 
     
-    // Convert plain text body to HTML if it's not already HTML
     let html_body = if body.contains("<html") || body.contains("<div") || body.contains("<p>") {
         body.to_string()
     } else {

@@ -76,7 +76,7 @@ pub struct Channel5Ghz {
 pub struct TopSuspiciousNetwork {
     pub ssid: String,
     pub bssid: String,
-    pub risk_score: String, // "L", "M", "H", "C"
+    pub risk_score: String, 
     pub threat_count: i64,
 }
 
@@ -136,7 +136,7 @@ pub struct UserActivityStats {
     pub profile_save_attempts: i64,
 }
 
-#[allow(dead_code)] // Used in analytics but may not be directly constructed
+#[allow(dead_code)] 
 #[derive(Debug, Serialize)]
 pub struct NetworkScanCount {
     pub ssid: String,

@@ -21,7 +21,6 @@ async fn main() {
     let cors = CorsLayer::very_permissive();
     
     let app = Router::new()
-        // Auth routes
         .route("/auth/login", post(auth::login_handler))
         .route("/auth/refresh", post(auth::refresh_token_handler))
         .route("/auth/logout", post(auth::logout_handler))
@@ -34,34 +33,22 @@ async fn main() {
         .route("/auth/reset/request", post(auth::reset_password_request_handler))
         .route("/auth/reset/confirm", post(auth::reset_password_confirm_handler))
         
-        // Blacklist routes
         .route("/blacklist", get(blacklist::get_blacklist).post(blacklist::add_to_blacklist))
         .route("/blacklist/{id}", delete(blacklist::delete_from_blacklist))
         
-        // Whitelist routes
         .route("/whitelist", get(whitelist::get_whitelist).post(whitelist::add_to_whitelist))
         .route("/whitelist/{id}", delete(whitelist::delete_from_whitelist))
         
-        // Logs routes
         .route("/logs", get(logs::get_logs).post(logs::add_log))
         .route("/logs/export", get(logs::export_logs))
         
-        // Profile routes
         .route("/profile", get(profile::get_user_profile).post(profile::update_user_profile))
         .route("/profile/username", post(profile::change_username_handler))
         .route("/profile/password", post(profile::change_password_handler))
         
-        // Analytics routes
         .route("/analytics", get(analytics::get_analytics))
-        
-        // Commented out routes (for future use)
-        // .route("/threats/alert", post(add_threat_alert))
-        // .route("/threats", get(get_threats))
-        // .route("/monitoring/preferences", get(get_monitoring_preferences).post(update_monitoring_preferences))
-        
         .layer(cors);
     
-    // Use PORT from environment variable (Render/cloud platforms) or default to 3000 for local development
     let port = std::env::var("PORT")
         .unwrap_or_else(|_| "3000".to_string())
         .parse::<u16>()

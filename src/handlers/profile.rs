@@ -37,7 +37,6 @@ pub async fn get_user_profile(user: AuthUser) -> impl IntoResponse {
             .into_response()
         }
         Ok(None) => {
-            // Create default profile if none exists
             let default_profile = UserProfile {
                 id: ObjectId::new(),
                 user_id: user.user_id.clone(),
@@ -130,7 +129,6 @@ pub async fn update_user_profile(
             success_response(StatusCode::OK, serde_json::json!({"status": "profile_updated"}))
         }
         Ok(_) => {
-            // Create profile if it doesn't exist
             let default_profile = doc! {
                 "user_id": &user.user_id,
                 "profiling_preference": payload.profiling_preference.unwrap_or_else(|| "balanced".to_string()),
@@ -174,11 +172,9 @@ pub async fn change_username_handler(
         .await
     {
         Ok(result) if result.matched_count > 0 => {
-            // Generate new tokens with updated username
             let new_token = jwt::create_jwt(&user.user_id, Some(&payload.username));
             let new_refresh_token = jwt::create_refresh_token(&user.user_id, Some(&payload.username));
             
-            // Revoke old refresh token and store new one
             if let Err(e) = refresh_tokens::revoke_all_refresh_tokens_for_user(&db, &user.user_id).await {
                 eprintln!("Failed to revoke old refresh tokens after username change: {:?}", e);
             }
@@ -224,7 +220,6 @@ pub async fn change_password_handler(
         Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
 
-    // Verify current password
     let valid = match password::verify_password(&payload.current_password, &user_doc.password_hash) {
         Ok(is_valid) => is_valid,
         Err(_) => {
@@ -239,7 +234,6 @@ pub async fn change_password_handler(
         return error_response(StatusCode::UNAUTHORIZED, "Invalid current password");
     }
 
-    // Hash new password
     let password_hash = match password::hash_password(&payload.new_password) {
         Ok(hash) => hash,
         Err(_) => {
@@ -250,7 +244,6 @@ pub async fn change_password_handler(
         }
     };
 
-    // Update password
     match users
         .update_one(
             doc! { "_id": obj_id },
@@ -259,7 +252,6 @@ pub async fn change_password_handler(
         .await
     {
         Ok(result) if result.matched_count > 0 => {
-            // Revoke all refresh tokens for security (user should re-authenticate)
             match refresh_tokens::revoke_all_refresh_tokens_for_user(&db, &user.user_id).await {
                 Ok(count) => {
                     eprintln!(
