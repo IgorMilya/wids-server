@@ -28,7 +28,7 @@ impl EnvVars {
 pub struct Constants;
 
 impl Constants {
-    pub const MAX_REGISTRATION_ATTEMPTS: usize = 5;
+    pub const MAX_REGISTRATION_ATTEMPTS: usize = 500;
     
     pub const RATE_LIMIT_WINDOW: StdDuration = StdDuration::from_secs(60 * 60);
     
