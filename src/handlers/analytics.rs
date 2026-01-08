@@ -47,9 +47,7 @@ pub async fn get_analytics(
     let user_filter = doc! { "user_id": &user.user_id };
 
     // ========== SECURITY METRICS ==========
-    // High/Critical risk: Match the exact pattern with full label
-    // Format: "Risk level: H (High)" or "Risk level: C (Critical)"
-    // Use word boundaries and exact matching to prevent false positives
+
     let high_risk = logs_coll
         .count_documents(doc! {
             "user_id": &user.user_id,
@@ -62,9 +60,7 @@ pub async fn get_analytics(
                 },
                 {
                     "$or": [
-                        // Match "Risk level: H (High)" - H must be followed by space, opening paren, then "High"
                         { "details": { "$regex": r"Risk level:\s*H\s*\(High\)", "$options": "i" } },
-                        // Match "Risk level: C (Critical)" - C must be followed by space, opening paren, then "Critical"
                         { "details": { "$regex": r"Risk level:\s*C\s*\(Critical\)", "$options": "i" } },
                     ]
                 }
@@ -73,7 +69,6 @@ pub async fn get_analytics(
         .await
         .unwrap_or(0) as i64;
 
-    // Medium risk: Match "Risk level: M (Medium)" exactly
     let medium_risk = logs_coll
         .count_documents(doc! {
             "user_id": &user.user_id,
@@ -92,9 +87,7 @@ pub async fn get_analytics(
         .await
         .unwrap_or(0) as i64;
 
-    // Low/Whitelisted risk: Match "Risk level: L (Low)" or "Risk level: WL (Whitelisted)" exactly
-    // CRITICAL: Must ensure L is followed by (Low), not (High) or any other label
-    // The pattern explicitly requires L followed by space, opening paren, then "Low"
+   
     let low_risk = logs_coll
         .count_documents(doc! {
             "user_id": &user.user_id,
@@ -107,10 +100,7 @@ pub async fn get_analytics(
                 },
                 {
                     "$or": [
-                        // Match "Risk level: L (Low)" - L must be followed by space, opening paren, then "Low"
-                        // This pattern CANNOT match "Risk level: H (High)" because L != H
                         { "details": { "$regex": r"Risk level:\s*L\s*\(Low\)", "$options": "i" } },
-                        // Match "Risk level: WL (Whitelisted)" - WL must be followed by space, opening paren, then "Whitelisted"
                         { "details": { "$regex": r"Risk level:\s*WL\s*\(Whitelisted\)", "$options": "i" } },
                     ]
                 }
@@ -418,7 +408,6 @@ pub async fn get_analytics(
                     doc.get("count").and_then(|v| v.as_i64()),
                 ) {
                     if !ssid.is_empty() && ssid != "-" {
-                        // Get BSSID for this SSID (use first one found)
                         let bssid = logs_coll
                             .find_one(doc! {
                                 "user_id": &user.user_id,
@@ -445,7 +434,6 @@ pub async fn get_analytics(
         }
     }
 
-    // Calculate networks in lists (blacklist + whitelist)
     let networks_in_lists = total_blacklisted + total_whitelisted;
 
     // ========== TIME SERIES DATA ==========
@@ -847,7 +835,7 @@ pub async fn get_analytics(
         "week" => DateTime::from_millis(now.timestamp_millis() - (7 * 24 * 60 * 60 * 1000)),
         "month" => DateTime::from_millis(now.timestamp_millis() - (30 * 24 * 60 * 60 * 1000)),
         "year" => DateTime::from_millis(now.timestamp_millis() - (365 * 24 * 60 * 60 * 1000)),
-        _ => DateTime::from_millis(0), // "all" - use epoch start
+        _ => DateTime::from_millis(0), 
     };
 
     let mut base_filter = doc! {
