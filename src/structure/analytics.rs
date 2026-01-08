@@ -3,7 +3,7 @@ use serde::Serialize;
 #[derive(Debug, Serialize)]
 pub struct NetworkStats {
     pub most_scanned_networks: Vec<MostScannedNetwork>,
-    pub unique_networks_scanned: i64,
+    pub networks_in_lists: i64,
 }
 
 #[derive(Debug, Serialize)]

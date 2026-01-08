@@ -47,6 +47,9 @@ pub async fn get_analytics(
     let user_filter = doc! { "user_id": &user.user_id };
 
     // ========== SECURITY METRICS ==========
+    // High/Critical risk: Match the exact pattern with full label
+    // Format: "Risk level: H (High)" or "Risk level: C (Critical)"
+    // Use word boundaries and exact matching to prevent false positives
     let high_risk = logs_coll
         .count_documents(doc! {
             "user_id": &user.user_id,
@@ -59,9 +62,10 @@ pub async fn get_analytics(
                 },
                 {
                     "$or": [
-                        { "details": { "$regex": r"Risk level:\s*[CH]|Risk level:\s*C|Risk level:\s*H|\(Critical\)|\(High\)", "$options": "i" } },
-                        { "details": { "$regex": r"risk.*[Hh]", "$options": "i" } },
-                        { "details": { "$regex": r"risk.*[Cc]", "$options": "i" } },
+                        // Match "Risk level: H (High)" - H must be followed by space, opening paren, then "High"
+                        { "details": { "$regex": r"Risk level:\s*H\s*\(High\)", "$options": "i" } },
+                        // Match "Risk level: C (Critical)" - C must be followed by space, opening paren, then "Critical"
+                        { "details": { "$regex": r"Risk level:\s*C\s*\(Critical\)", "$options": "i" } },
                     ]
                 }
             ]
@@ -69,6 +73,7 @@ pub async fn get_analytics(
         .await
         .unwrap_or(0) as i64;
 
+    // Medium risk: Match "Risk level: M (Medium)" exactly
     let medium_risk = logs_coll
         .count_documents(doc! {
             "user_id": &user.user_id,
@@ -80,17 +85,16 @@ pub async fn get_analytics(
                     ]
                 },
                 {
-                    "$or": [
-                        { "details": { "$regex": r"Risk level:\s*M", "$options": "i" } },
-                        { "details": { "$regex": r"risk.*[Mm]", "$options": "i" } },
-                        { "details": { "$regex": r"\(Medium\)", "$options": "i" } },
-                    ]
+                    "details": { "$regex": r"Risk level:\s*M\s*\(Medium\)", "$options": "i" }
                 }
             ]
         })
         .await
         .unwrap_or(0) as i64;
 
+    // Low/Whitelisted risk: Match "Risk level: L (Low)" or "Risk level: WL (Whitelisted)" exactly
+    // CRITICAL: Must ensure L is followed by (Low), not (High) or any other label
+    // The pattern explicitly requires L followed by space, opening paren, then "Low"
     let low_risk = logs_coll
         .count_documents(doc! {
             "user_id": &user.user_id,
@@ -103,9 +107,11 @@ pub async fn get_analytics(
                 },
                 {
                     "$or": [
-                        { "details": { "$regex": r"Risk level:\s*L", "$options": "i" } },
-                        { "details": { "$regex": r"risk.*[Ll]", "$options": "i" } },
-                        { "details": { "$regex": r"\(Low\)|\(Whitelisted\)", "$options": "i" } },
+                        // Match "Risk level: L (Low)" - L must be followed by space, opening paren, then "Low"
+                        // This pattern CANNOT match "Risk level: H (High)" because L != H
+                        { "details": { "$regex": r"Risk level:\s*L\s*\(Low\)", "$options": "i" } },
+                        // Match "Risk level: WL (Whitelisted)" - WL must be followed by space, opening paren, then "Whitelisted"
+                        { "details": { "$regex": r"Risk level:\s*WL\s*\(Whitelisted\)", "$options": "i" } },
                     ]
                 }
             ]
@@ -116,10 +122,7 @@ pub async fn get_analytics(
     let failed_attempts = logs_coll
         .count_documents(doc! {
             "user_id": &user.user_id,
-            "$or": [
-                { "action": { "$regex": "FAILED", "$options": "i" } },
-                { "action": "CONNECTED_RETRY" },
-            ]
+            "action": { "$regex": "FAILED", "$options": "i" }
         })
         .await
         .unwrap_or(0) as i64;
@@ -127,7 +130,10 @@ pub async fn get_analytics(
     let successful_connections = logs_coll
         .count_documents(doc! {
             "user_id": &user.user_id,
-            "action": "CONNECTED"
+            "$or": [
+                { "action": "CONNECTED" },
+                { "action": "CONNECTED_RETRY" },
+            ]
         })
         .await
         .unwrap_or(0) as i64;
@@ -439,39 +445,8 @@ pub async fn get_analytics(
         }
     }
 
-    let unique_networks_pipeline = vec![
-        doc! {
-            "$match": doc! {
-                "user_id": &user.user_id,
-                "network_ssid": doc! { "$exists": true, "$ne": "", "$ne": "-", "$ne": null }
-            }
-        },
-        doc! {
-            "$group": doc! {
-                "_id": "$network_ssid"
-            }
-        },
-        doc! {
-            "$count": "total"
-        },
-    ];
-
-    let unique_networks = {
-        let mut unique_cursor = match logs_coll.aggregate(unique_networks_pipeline).await {
-            Ok(cursor) => cursor,
-            Err(_) => {
-                return error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Failed to aggregate unique networks",
-                );
-            }
-        };
-        if let Some(doc) = unique_cursor.try_next().await.unwrap_or(None) {
-            doc.get("total").and_then(|v| v.as_i64()).unwrap_or(0)
-        } else {
-            0
-        }
-    };
+    // Calculate networks in lists (blacklist + whitelist)
+    let networks_in_lists = total_blacklisted + total_whitelisted;
 
     // ========== TIME SERIES DATA ==========
     let thirty_days_ago = DateTime::from_millis(
@@ -1150,7 +1125,7 @@ pub async fn get_analytics(
         },
         network_stats: NetworkStats {
             most_scanned_networks: most_scanned,
-            unique_networks_scanned: unique_networks,
+            networks_in_lists,
         },
         time_series: TimeSeriesData {
             daily_activity,
